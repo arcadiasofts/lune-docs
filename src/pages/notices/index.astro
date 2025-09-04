@@ -1,0 +1,34 @@
+---
+import Layout from '@/layouts/Layout.astro';
+import '@/styles/global.css';
+import { NoticesList } from '@/components/notices/items';
+
+const noticeModules = import.meta.glob('../../contents/notices/**/*.{md,mdx}', {
+  eager: true,
+});
+
+// notices를 날짜 내림차순으로 정렬
+const notices = Object.entries(noticeModules)
+  .map(([filePath, mod]) => {
+    const { frontmatter, Content } = mod as {
+      frontmatter: { title: string; pubDate: string | Date };
+      Content: any;
+    };
+    const fileNameWithExt = filePath.split('/').pop() ?? '';
+    const fileName = fileNameWithExt.replace(/\.(md|mdx)$/, '');
+    return { frontmatter, Content, fileName };
+  })
+  .sort((a, b) => {
+    const dateA = new Date(a.frontmatter.pubDate).getTime();
+    const dateB = new Date(b.frontmatter.pubDate).getTime();
+    return dateB - dateA;
+  });
+---
+
+<Layout>
+  <main class="mb-24">
+    <h1 class="my-10 text-center text-3xl font-bold">사이트 공지사항</h1>
+    <NoticesList notices={notices} client:only="react" />
+    <div class="h-10"></div>
+  </main>
+</Layout>

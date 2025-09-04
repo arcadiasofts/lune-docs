@@ -1,0 +1,51 @@
+---
+const noticeModules = import.meta.glob("../../contents/notices/**/*.{md,mdx}", {
+  eager: true,
+});
+
+// notices를 날짜 내림차순으로 정렬
+const notices = Object.entries(noticeModules)
+  .map(([filePath, mod]) => {
+    // Astro v3/v4에서 md/mdx 모듈의 구조는 아래와 같음
+    // { frontmatter, file, url, Content, ... }
+    // 타입 안전을 위해 구조 분해
+    const { frontmatter, Content } = mod as {
+      frontmatter: { title: string; pubDate: string | Date };
+      Content: any;
+    };
+    // 파일 이름만 추출 (확장자 제거)
+    // filePath 예시: '../../contents/notices/2025-06-22.mdx'
+    const fileNameWithExt = filePath.split('/').pop() ?? '';
+    const fileName = fileNameWithExt.replace(/\.(md|mdx)$/, '');
+    return { frontmatter, Content, fileName };
+  })
+  .sort((a, b) => {
+    const dateA = new Date(a.frontmatter.pubDate).getTime();
+    const dateB = new Date(b.frontmatter.pubDate).getTime();
+    return dateB - dateA;
+  });
+---
+
+<a href="/notices" class="relative w-full h-36 my-10 rounded-md border border-border flex items-center justify-end px-10 overflow-hidde bg-primary uppercase font-bold text-5xl">
+  Notices
+</a>
+<div class="flex flex-col">
+  {notices
+    .slice(0,5)
+    .map(({ frontmatter, fileName }, idx) => (
+    <>
+      <a href={`/notices/${fileName}`}>
+        <div class="p-6 flex gap-5 items-center">
+          <h3 class="font-bold text-lg">{frontmatter.title}</h3>
+          <div class="text-sm text-gray-500">
+            {frontmatter.pubDate
+              ? new Date(frontmatter.pubDate).toLocaleDateString()
+              : null}
+          </div>
+        </div>
+      </a>
+      {idx === notices.slice(0,5).length - 1 ? <></> : 
+      <div class="w-full h-[1px] bg-secondary"></div>}
+    </>
+  ))}
+</div>

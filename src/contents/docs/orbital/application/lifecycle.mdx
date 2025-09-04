@@ -1,0 +1,589 @@
+---
+title: '생명주기 관리'
+path: 'orbital/application/lifecycle'
+product: 'Orbital'
+category: 'Application'
+lastUpdate: 2025-09-05
+order: 15
+---
+
+## 개요
+
+Orbital 애플리케이션의 생명주기를 효과적으로 관리하여 안정적인 서버 운영을 보장할 수 있습니다. 서버 시작, 중지, 재시작 등의 작업을 안전하게 처리하는 방법을 다룹니다.
+
+## 서버 시작
+
+### 기본 서버 시작
+
+```rust
+use orbital::application::OrbitApplication;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = OrbitApplication::new(
+        Some("Lifecycle Server".to_string()),
+        None,
+        None
+    );
+
+    // 라우터 등록 등...
+
+    println!("🚀 서버 시작 중...");
+
+    // 블로킹 방식으로 서버 시작
+    app.listen(8080).await?;
+
+    Ok(())
+}
+```
+
+### 비동기 서버 시작
+
+```rust
+use orbital::application::OrbitApplication;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = OrbitApplication::new(
+        Some("Async Server".to_string()),
+        None,
+        None
+    );
+
+    // 서버를 백그라운드에서 시작
+    let server_handle = tokio::spawn(async move {
+        if let Err(e) = app.listen(8080).await {
+            eprintln!("서버 오류: {}", e);
+        }
+    });
+
+    // 다른 작업 수행 가능
+    println!("서버가 백그라운드에서 실행 중입니다...");
+
+    // 필요시 서버 완료 대기
+    server_handle.await?;
+
+    Ok(())
+}
+```
+
+## Graceful Shutdown
+
+### 신호 기반 종료
+
+```rust
+use tokio::signal;
+use orbital::application::OrbitApplication;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = OrbitApplication::new(
+        Some("Graceful Server".to_string()),
+        None,
+        None
+    );
+
+    // 라우터 등록 등...
+
+    println!("🚀 서버 시작 중...");
+
+    // 서버 시작과 종료 신호 대기를 동시에
+    tokio::select! {
+        result = app.listen(8080) => {
+            if let Err(e) = result {
+                eprintln!("서버 오류: {}", e);
+            }
+        }
+        _ = signal::ctrl_c() => {
+            println!("\n🛑 종료 신호 수신, 서버를 안전하게 종료합니다...");
+
+            // 애플리케이션 중지
+            let closed_connections = app.stop().await;
+            println!("✅ {} 개의 연결이 안전하게 종료되었습니다", closed_connections);
+        }
+    }
+
+    Ok(())
+}
+```
+
+### 다중 신호 처리
+
+```rust
+use tokio::signal::unix::{signal, SignalKind};
+use orbital::application::OrbitApplication;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = OrbitApplication::new(
+        Some("Multi-Signal Server".to_string()),
+        None,
+        None
+    );
+
+    // 다양한 신호 핸들러 설정
+    let mut sigterm = signal(SignalKind::terminate())?;
+    let mut sigint = signal(SignalKind::interrupt())?;
+    let mut sigusr1 = signal(SignalKind::user_defined1())?;
+
+    println!("🚀 서버 시작 중...");
+
+    tokio::select! {
+        result = app.listen(8080) => {
+            if let Err(e) = result {
+                eprintln!("서버 오류: {}", e);
+            }
+        }
+        _ = sigterm.recv() => {
+            println!("📋 SIGTERM 신호 수신 - 정상 종료");
+            let closed_connections = app.stop().await;
+            println!("✅ {} 개의 연결이 안전하게 종료되었습니다", closed_connections);
+        }
+        _ = sigint.recv() => {
+            println!("⚡ SIGINT 신호 수신 - 즉시 종료");
+            let closed_connections = app.stop().await;
+            println!("✅ {} 개의 연결이 안전하게 종료되었습니다", closed_connections);
+        }
+        _ = sigusr1.recv() => {
+            println!("🔄 SIGUSR1 신호 수신 - 설정 재로드");
+            // 설정 재로드 로직
+            reload_configuration(&mut app).await;
+        }
+    }
+
+    Ok(())
+}
+
+async fn reload_configuration(app: &mut OrbitApplication) {
+    println!("⚙️ 설정을 재로드하는 중...");
+
+    // 실제로는 설정 파일을 다시 읽고 적용
+    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
+    println!("✅ 설정 재로드 완료");
+}
+```
+
+## 서버 재시작
+
+### 애플리케이션 재시작
+
+```rust
+use orbital::application::OrbitApplication;
+
+async fn restart_application(mut app: OrbitApplication) -> Result<(), Box<dyn std::error::Error>> {
+    println!("🔄 애플리케이션 재시작 중...");
+
+    // 현재 실행 중인 서버 중지
+    if app.is_running() {
+        let closed_connections = app.stop().await;
+        println!("기존 연결 {} 개 종료", closed_connections);
+    }
+
+    // 잠시 대기 (연결 정리 시간)
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+    // 서버 재시작
+    println!("🚀 서버 재시작...");
+    app.listen(8080).await?;
+
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let app = OrbitApplication::new(
+        Some("Restartable Server".to_string()),
+        None,
+        None
+    );
+
+    // 재시작 로직 실행
+    restart_application(app).await?;
+
+    Ok(())
+}
+```
+
+### 무중단 재시작 (Zero-Downtime Restart)
+
+```rust
+use orbital::application::OrbitApplication;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+struct ServerManager {
+    current_app: Arc<Mutex<Option<OrbitApplication>>>,
+}
+
+impl ServerManager {
+    fn new() -> Self {
+        Self {
+            current_app: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    async fn start_server(&self, port: u16) -> Result<(), Box<dyn std::error::Error>> {
+        let app = OrbitApplication::new(
+            Some("Zero-Downtime Server".to_string()),
+            None,
+            None
+        );
+
+        // 새 서버 시작
+        let app_clone = app.clone();
+        let server_handle = tokio::spawn(async move {
+            if let Err(e) = app_clone.listen(port).await {
+                eprintln!("서버 오류: {}", e);
+            }
+        });
+
+        // 현재 앱 업데이트
+        {
+            let mut current = self.current_app.lock().await;
+            *current = Some(app);
+        }
+
+        println!("✅ 새 서버가 포트 {}에서 시작되었습니다", port);
+
+        // 서버 완료 대기
+        server_handle.await?;
+
+        Ok(())
+    }
+
+    async fn restart_server(&self, new_port: u16) -> Result<(), Box<dyn std::error::Error>> {
+        println!("🔄 무중단 재시작 시작...");
+
+        // 1. 새 포트에서 새 서버 시작
+        let new_app = OrbitApplication::new(
+            Some("New Server Instance".to_string()),
+            None,
+            None
+        );
+
+        let new_app_clone = new_app.clone();
+        let new_server_handle = tokio::spawn(async move {
+            if let Err(e) = new_app_clone.listen(new_port).await {
+                eprintln!("새 서버 오류: {}", e);
+            }
+        });
+
+        // 새 서버가 준비될 때까지 잠시 대기
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+        // 2. 기존 서버 중지
+        {
+            let mut current = self.current_app.lock().await;
+            if let Some(old_app) = current.take() {
+                let closed_connections = old_app.stop().await;
+                println!("🛑 기존 서버 중지 ({} 연결 종료)", closed_connections);
+            }
+        }
+
+        // 3. 새 서버를 현재 서버로 설정
+        {
+            let mut current = self.current_app.lock().await;
+            *current = Some(new_app);
+        }
+
+        println!("✅ 무중단 재시작 완료 (새 포트: {})", new_port);
+
+        // 새 서버 완료 대기
+        new_server_handle.await?;
+
+        Ok(())
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let server_manager = ServerManager::new();
+
+    // 초기 서버 시작
+    server_manager.start_server(8080).await?;
+
+    Ok(())
+}
+```
+
+## 헬스 체크
+
+### 서버 상태 확인
+
+```rust
+use orbital::application::OrbitApplication;
+use orbital::router::{Router, RouteResponse};
+use serde_json::json;
+use std::sync::Arc;
+
+async fn setup_health_check_routes(app: &mut OrbitApplication) -> Result<(), Box<dyn std::error::Error>> {
+    let mut health_router = Router::new("Health Check Router");
+
+    // 기본 헬스 체크
+    health_router.read("/health", Arc::new(|_ctx| {
+        Ok(RouteResponse::json(json!({
+            "status": "healthy",
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+            "service": "orbital-server"
+        })))
+    }));
+
+    // 상세 헬스 체크
+    health_router.read("/health/detailed", Arc::new(|ctx| {
+        // 실제로는 ctx를 통해 앱 상태에 접근
+        Ok(RouteResponse::json(json!({
+            "status": "healthy",
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+            "details": {
+                "database": "connected",
+                "memory_usage_mb": 256,
+                "cpu_usage_percent": 15.5,
+                "active_connections": 42,
+                "uptime_seconds": 3600
+            }
+        })))
+    }));
+
+    // 준비 상태 체크 (Readiness Probe)
+    health_router.read("/ready", Arc::new(|_ctx| {
+        // 서버가 요청을 받을 준비가 되었는지 확인
+        let is_ready = true; // 실제로는 초기화 상태 확인
+
+        if is_ready {
+            Ok(RouteResponse::json(json!({
+                "status": "ready",
+                "timestamp": chrono::Utc::now().to_rfc3339()
+            })))
+        } else {
+            Ok(RouteResponse::error(503, "Service not ready"))
+        }
+    }));
+
+    // 생존 확인 (Liveness Probe)
+    health_router.read("/live", Arc::new(|_ctx| {
+        Ok(RouteResponse::json(json!({
+            "status": "alive",
+            "timestamp": chrono::Utc::now().to_rfc3339()
+        })))
+    }));
+
+    app.register(health_router)?;
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = OrbitApplication::new(
+        Some("Health Check Server".to_string()),
+        None,
+        None
+    );
+
+    // 헬스 체크 라우트 설정
+    setup_health_check_routes(&mut app).await?;
+
+    println!("🚀 헬스 체크가 활성화된 서버 시작");
+    println!("📡 헬스 체크 엔드포인트:");
+    println!("   GET /health          - 기본 상태");
+    println!("   GET /health/detailed - 상세 상태");
+    println!("   GET /ready           - 준비 상태");
+    println!("   GET /live            - 생존 확인");
+
+    app.listen(8080).await?;
+
+    Ok(())
+}
+```
+
+### 자동 헬스 체크
+
+```rust
+use orbital::application::OrbitApplication;
+
+async fn periodic_health_check(app: &OrbitApplication) {
+    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
+
+    loop {
+        interval.tick().await;
+
+        let status = app.status().await;
+        let health_score = calculate_health_score(&status);
+
+        println!("💓 헬스 체크 [{}]: 점수 {}/100",
+            chrono::Utc::now().format("%H:%M:%S"),
+            health_score
+        );
+
+        if health_score < 70 {
+            println!("⚠️ 서버 상태 주의: 헬스 점수가 낮습니다");
+
+            // 필요시 알림 발송
+            send_health_alert(&status, health_score).await;
+        }
+
+        if health_score < 30 {
+            println!("🚨 서버 상태 위험: 긴급 조치 필요");
+
+            // 자동 복구 시도
+            attempt_auto_recovery(app).await;
+        }
+    }
+}
+
+fn calculate_health_score(status: &orbital::application::ApplicationStatus) -> u32 {
+    let mut score = 100u32;
+
+    // 연결 상태 점수 (40점 만점)
+    if status.active_connections > 0 {
+        let health_ratio = status.healthy_connections as f64 / status.active_connections as f64;
+        score = score.saturating_sub((40.0 * (1.0 - health_ratio)) as u32);
+    }
+
+    // 실행 상태 점수 (30점 만점)
+    if !status.is_running {
+        score = score.saturating_sub(30);
+    }
+
+    // 추가 메트릭 기반 점수 계산 가능
+    // - 메모리 사용률
+    // - CPU 사용률
+    // - 응답 시간
+    // - 에러 비율 등
+
+    score
+}
+
+async fn send_health_alert(status: &orbital::application::ApplicationStatus, score: u32) {
+    println!("📧 헬스 알림 발송: 점수 {} - {}", score, status.summary());
+
+    // 실제로는 이메일, Slack, 등으로 알림 발송
+}
+
+async fn attempt_auto_recovery(app: &OrbitApplication) {
+    println!("🔧 자동 복구 시도 중...");
+
+    // 자동 복구 로직
+    // - 메모리 정리
+    // - 타임아웃된 연결 정리
+    // - 캐시 초기화 등
+
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    println!("✅ 자동 복구 완료");
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let app = OrbitApplication::new(
+        Some("Auto Health Check Server".to_string()),
+        None,
+        None
+    );
+
+    // 백그라운드에서 헬스 체크 실행
+    let app_clone = app.clone();
+    tokio::spawn(async move {
+        periodic_health_check(&app_clone).await;
+    });
+
+    app.listen(8080).await?;
+
+    Ok(())
+}
+```
+
+## 프로세스 관리
+
+### PID 파일 관리
+
+```rust
+use orbital::application::OrbitApplication;
+use std::fs;
+use std::io::Write;
+
+fn write_pid_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let pid = std::process::id();
+    fs::write(path, pid.to_string())?;
+    println!("📝 PID 파일 생성: {} (PID: {})", path, pid);
+    Ok(())
+}
+
+fn remove_pid_file(path: &str) {
+    if fs::remove_file(path).is_ok() {
+        println!("🗑️ PID 파일 삭제: {}", path);
+    }
+}
+
+fn check_existing_process(path: &str) -> Result<bool, Box<dyn std::error::Error>> {
+    if let Ok(pid_str) = fs::read_to_string(path) {
+        if let Ok(pid) = pid_str.trim().parse::<u32>() {
+            // 프로세스 존재 여부 확인 (Unix 시스템)
+            let output = std::process::Command::new("kill")
+                .arg("-0")
+                .arg(pid.to_string())
+                .output();
+
+            match output {
+                Ok(result) => Ok(result.status.success()),
+                Err(_) => Ok(false),
+            }
+        } else {
+            Ok(false)
+        }
+    } else {
+        Ok(false)
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let pid_file_path = "/var/run/orbital-server.pid";
+
+    // 기존 프로세스 확인
+    if check_existing_process(pid_file_path)? {
+        eprintln!("❌ 다른 서버 인스턴스가 이미 실행 중입니다");
+        std::process::exit(1);
+    }
+
+    // PID 파일 생성
+    write_pid_file(pid_file_path)?;
+
+    // 종료 시 PID 파일 정리를 위한 가드 설정
+    let pid_file_guard = scopeguard::guard(pid_file_path.to_string(), |path| {
+        remove_pid_file(&path);
+    });
+
+    let mut app = OrbitApplication::new(
+        Some("PID Managed Server".to_string()),
+        None,
+        None
+    );
+
+    // 서버 실행
+    tokio::select! {
+        result = app.listen(8080) => {
+            if let Err(e) = result {
+                eprintln!("서버 오류: {}", e);
+            }
+        }
+        _ = tokio::signal::ctrl_c() => {
+            println!("\n🛑 종료 신호 수신");
+            let closed_connections = app.stop().await;
+            println!("✅ {} 개의 연결이 안전하게 종료되었습니다", closed_connections);
+        }
+    }
+
+    // PID 파일은 가드에 의해 자동으로 정리됩니다
+    drop(pid_file_guard);
+
+    Ok(())
+}
+```
+
+## 다음 단계
+
+생명주기 관리에 대해 알아보았다면, 다음 문서들을 확인해보세요:
+
+- [에러 처리](/docs/orbital/application/error-handling) - 에러 처리와 복구
+- [설정 관리](/docs/orbital/application/configuration) - 애플리케이션 설정
+- [상태 모니터링](/docs/orbital/application/monitoring) - 애플리케이션 상태와 통계

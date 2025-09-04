@@ -1,0 +1,133 @@
+---
+title: 'Event System 개요'
+path: 'orbital/event/index'
+product: 'Orbital'
+category: 'Event'
+lastUpdate: 2025-09-05
+order: 30
+---
+
+## Orbital Event System
+
+Orbital의 이벤트 시스템은 애플리케이션 전반에서 발생하는 다양한 이벤트를 처리하고 관리하는 기능을 제공합니다. 연결 상태 변화, 라우터 등록, 로그 이벤트 등을 효율적으로 처리할 수 있습니다.
+
+## 핵심 컴포넌트
+
+- **EventEmitter**: 이벤트를 발생시키고 리스너에게 전달하는 중앙 관리자
+- **EventListener**: 특정 이벤트를 수신하고 처리하는 리스너
+- **EventData**: 이벤트 정보와 페이로드를 담는 데이터 구조
+- **EventCallback**: 이벤트 처리 함수 타입
+
+## 빠른 시작
+
+```rust
+use orbital::application::OrbitApplication;
+use orbital::event::{EventListener, EventCallback};
+use std::sync::Arc;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let app = OrbitApplication::new(
+        Some("Event App".to_string()),
+        None,
+        None
+    );
+
+    // 이벤트 에미터 가져오기
+    let emitter = app.event_emitter();
+
+    // 연결 이벤트 리스너
+    let connection_callback: EventCallback = Arc::new(|event_data| {
+        println!("🔗 연결 이벤트: {}", event_data.payload());
+        Ok(())
+    });
+
+    let connection_listener = EventListener::new("connection:new", connection_callback);
+    emitter.add_listener(connection_listener)?;
+
+    // 커스텀 이벤트 발생
+    app.emit_event("user:action", serde_json::json!({
+        "action": "login",
+        "user_id": 123,
+        "timestamp": chrono::Utc::now().to_rfc3339()
+    }));
+
+    app.listen(8080).await?;
+
+    Ok(())
+}
+```
+
+## 내장 이벤트
+
+Orbital은 다음과 같은 내장 이벤트들을 자동으로 발생시킵니다:
+
+### 애플리케이션 이벤트
+
+- `app:started` - 애플리케이션 시작
+- `app:stopped` - 애플리케이션 중지
+
+### 연결 이벤트
+
+- `connection:new` - 새로운 연결
+- `connection:closed` - 연결 종료
+- `connection:heartbeat_timeout` - 하트비트 타임아웃
+
+### 라우터 이벤트
+
+- `router:registered` - 라우터 등록
+- `route:matched` - 라우트 매칭 성공
+- `route:not_found` - 라우트 매칭 실패
+
+### 로그 이벤트
+
+- `log:trace`, `log:debug`, `log:info`, `log:warn`, `log:error` - 다양한 로그 레벨
+
+## API 레퍼런스
+
+### EventEmitter 메서드
+
+| 메서드                        | 설명                     |
+| ----------------------------- | ------------------------ |
+| `new()`                       | 새로운 EventEmitter 생성 |
+| `emit_event(name, payload)`   | 이벤트 발생              |
+| `emit_event_data(event_data)` | EventData로 이벤트 발생  |
+| `add_listener(listener)`      | 이벤트 리스너 추가       |
+| `remove_listener(id)`         | 이벤트 리스너 제거       |
+| `listener_count()`            | 등록된 리스너 수 반환    |
+
+### EventListener 메서드
+
+| 메서드                      | 설명                       |
+| --------------------------- | -------------------------- |
+| `new(event_name, callback)` | 새로운 리스너 생성         |
+| `event_name()`              | 수신 중인 이벤트 이름 반환 |
+| `is_active()`               | 리스너 활성 상태 확인      |
+
+### EventData 메서드
+
+| 메서드               | 설명                      |
+| -------------------- | ------------------------- |
+| `new(name, payload)` | 새로운 이벤트 데이터 생성 |
+| `name()`             | 이벤트 이름 반환          |
+| `payload()`          | 이벤트 페이로드 반환      |
+| `timestamp()`        | 이벤트 발생 시간 반환     |
+
+## 문서 목차
+
+### 기본 사용법
+
+- [시작하기](/docs/orbital/event/getting-started) - 이벤트 시스템 기본 사용법
+- [이벤트 리스너](/docs/orbital/event/listeners) - 리스너 등록과 관리
+
+### 고급 기능
+
+- [커스텀 이벤트](/docs/orbital/event/custom-events) - 커스텀 이벤트 생성과 처리
+- [이벤트 패턴](/docs/orbital/event/patterns) - 이벤트 체이닝과 필터링
+- [성능 최적화](/docs/orbital/event/performance) - 이벤트 시스템 최적화
+
+## 관련 문서
+
+- [Application](/docs/orbital/application) - 애플리케이션 관리
+- [Router](/docs/orbital/router) - 라우팅 시스템
+- [Types](/docs/orbital/types) - 타입 정의와 데이터 구조

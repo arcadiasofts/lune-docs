@@ -1,0 +1,486 @@
+---
+title: '이벤트 시스템'
+path: 'orbital/application/events'
+product: 'Orbital'
+category: 'Application'
+lastUpdate: 2025-09-05
+order: 13
+---
+
+## 개요
+
+Orbital 애플리케이션은 강력한 이벤트 시스템을 통해 애플리케이션 전반의 상태 변화와 동작을 모니터링하고 대응할 수 있습니다.
+
+## 이벤트 리스너 등록
+
+### 기본 이벤트 리스너
+
+```rust
+use orbital::application::OrbitApplication;
+use orbital::event::{EventListener, EventCallback};
+use std::sync::Arc;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let app = OrbitApplication::new(
+        Some("Event Server".to_string()),
+        None,
+        None
+    );
+
+    // 이벤트 에미터 가져오기
+    let emitter = app.event_emitter();
+
+    // 연결 이벤트 리스너
+    let connection_callback: EventCallback = Arc::new(|event_data| {
+        println!("🔗 새로운 연결: {}", event_data.payload());
+        Ok(())
+    });
+
+    let connection_listener = EventListener::new("connection:new", connection_callback);
+    emitter.add_listener(connection_listener)?;
+
+    // 라우터 이벤트 리스너
+    let router_callback: EventCallback = Arc::new(|event_data| {
+        println!("🛣️ 라우터 등록: {}", event_data.payload());
+        Ok(())
+    });
+
+    let router_listener = EventListener::new("router:registered", router_callback);
+    emitter.add_listener(router_listener)?;
+
+    // 에러 이벤트 리스너
+    let error_callback: EventCallback = Arc::new(|event_data| {
+        eprintln!("🚨 에러 발생: {}", event_data.payload());
+        Ok(())
+    });
+
+    let error_listener = EventListener::new("log:error", error_callback);
+    emitter.add_listener(error_listener)?;
+
+    app.listen(8080).await?;
+
+    Ok(())
+}
+```
+
+### 다중 이벤트 리스너
+
+```rust
+use orbital::application::OrbitApplication;
+use orbital::event::{EventListener, EventCallback};
+use std::sync::Arc;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let app = OrbitApplication::new(
+        Some("Multi-Event Server".to_string()),
+        None,
+        None
+    );
+
+    let emitter = app.event_emitter();
+
+    // 모든 연결 관련 이벤트 처리
+    let connection_events = vec![
+        "connection:new",
+        "connection:closed",
+        "connection:heartbeat_timeout"
+    ];
+
+    for event_name in connection_events {
+        let callback: EventCallback = Arc::new(move |event_data| {
+            println!("🔗 연결 이벤트 [{}]: {}", event_data.name(), event_data.payload());
+            Ok(())
+        });
+
+        let listener = EventListener::new(event_name, callback);
+        emitter.add_listener(listener)?;
+    }
+
+    // 모든 로그 이벤트 처리
+    let log_events = vec![
+        "log:info",
+        "log:warn",
+        "log:error",
+        "log:debug"
+    ];
+
+    for event_name in log_events {
+        let callback: EventCallback = Arc::new(move |event_data| {
+            let level = event_data.name().split(':').nth(1).unwrap_or("unknown");
+            println!("📝 [{}] {}", level.to_uppercase(), event_data.payload());
+            Ok(())
+        });
+
+        let listener = EventListener::new(event_name, callback);
+        emitter.add_listener(listener)?;
+    }
+
+    app.listen(8080).await?;
+
+    Ok(())
+}
+```
+
+## 커스텀 이벤트 발생
+
+### 비즈니스 로직 이벤트
+
+```rust
+use orbital::application::OrbitApplication;
+use serde_json::json;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let app = OrbitApplication::new(None, None, None);
+
+    // 사용자 액션 이벤트
+    app.emit_event("user:login", json!({
+        "user_id": 123,
+        "username": "alice",
+        "ip_address": "192.168.1.100",
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "user_agent": "LUNE Client 1.0"
+    }));
+
+    // 주문 생성 이벤트
+    app.emit_event("order:created", json!({
+        "order_id": "ORD-001",
+        "customer_id": 456,
+        "total_amount": 99.99,
+        "currency": "USD",
+        "items": [
+            {"product_id": "PROD-123", "quantity": 2, "price": 29.99},
+            {"product_id": "PROD-456", "quantity": 1, "price": 39.99}
+        ],
+        "payment_method": "credit_card",
+        "created_at": chrono::Utc::now().to_rfc3339()
+    }));
+
+    // 시스템 이벤트
+    app.emit_event("system:maintenance", json!({
+        "type": "scheduled",
+        "start_time": "2023-12-01T02:00:00Z",
+        "duration_minutes": 30,
+        "affected_services": ["api", "websocket", "database"],
+        "maintenance_reason": "Database optimization"
+    }));
+
+    Ok(())
+}
+```
+
+### 에러 및 알림 이벤트
+
+```rust
+use orbital::application::OrbitApplication;
+use serde_json::json;
+
+fn emit_error_events(app: &OrbitApplication) {
+    // 치명적 에러
+    app.emit_event("error:critical", json!({
+        "error_type": "database_connection_failed",
+        "message": "Failed to connect to primary database",
+        "details": {
+            "host": "db.example.com",
+            "port": 5432,
+            "database": "production",
+            "error_code": "CONNECTION_TIMEOUT"
+        },
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "requires_immediate_attention": true
+    }));
+
+    // 경고 이벤트
+    app.emit_event("warning:performance", json!({
+        "warning_type": "high_memory_usage",
+        "message": "Memory usage exceeded 80% threshold",
+        "current_usage_mb": 1024,
+        "threshold_mb": 800,
+        "suggested_action": "Consider garbage collection or memory optimization",
+        "timestamp": chrono::Utc::now().to_rfc3339()
+    }));
+
+    // 정보 이벤트
+    app.emit_event("info:metrics", json!({
+        "metrics": {
+            "active_connections": 150,
+            "requests_per_second": 45.2,
+            "average_response_time_ms": 120,
+            "error_rate_percent": 0.5
+        },
+        "timestamp": chrono::Utc::now().to_rfc3339()
+    }));
+}
+```
+
+## 이벤트 처리 패턴
+
+### 이벤트 체이닝
+
+```rust
+use orbital::application::OrbitApplication;
+use orbital::event::{EventListener, EventCallback};
+use serde_json::json;
+use std::sync::Arc;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let app = OrbitApplication::new(None, None, None);
+    let emitter = app.event_emitter();
+
+    // 주문 생성 이벤트 처리
+    let order_created_callback: EventCallback = Arc::new({
+        let app_clone = app.clone(); // app을 클론하여 클로저에서 사용
+        move |event_data| {
+            println!("📦 주문 생성됨: {}", event_data.payload());
+
+            // 연쇄 이벤트 발생
+            if let Some(order_id) = event_data.payload().get("order_id") {
+                // 재고 확인 이벤트
+                app_clone.emit_event("inventory:check", json!({
+                    "order_id": order_id,
+                    "requested_by": "order_created_handler"
+                }));
+
+                // 결제 처리 이벤트
+                app_clone.emit_event("payment:process", json!({
+                    "order_id": order_id,
+                    "amount": event_data.payload().get("total_amount").unwrap_or(&json!(0.0))
+                }));
+
+                // 이메일 발송 이벤트
+                app_clone.emit_event("email:send", json!({
+                    "template": "order_confirmation",
+                    "recipient": event_data.payload().get("customer_email"),
+                    "data": {
+                        "order_id": order_id
+                    }
+                }));
+            }
+
+            Ok(())
+        }
+    });
+
+    let order_listener = EventListener::new("order:created", order_created_callback);
+    emitter.add_listener(order_listener)?;
+
+    // 재고 확인 이벤트 처리
+    let inventory_callback: EventCallback = Arc::new(|event_data| {
+        println!("📊 재고 확인: {}", event_data.payload());
+        // 실제 재고 확인 로직
+        Ok(())
+    });
+
+    let inventory_listener = EventListener::new("inventory:check", inventory_callback);
+    emitter.add_listener(inventory_listener)?;
+
+    app.listen(8080).await?;
+
+    Ok(())
+}
+```
+
+### 비동기 이벤트 처리
+
+```rust
+use orbital::event::{EventListener, EventCallback};
+use tokio::time::{sleep, Duration};
+use std::sync::Arc;
+
+// 비동기 작업을 수행하는 이벤트 콜백
+let async_callback: EventCallback = Arc::new(|event_data| {
+    let data = event_data.clone();
+
+    // 별도 태스크에서 비동기 처리
+    tokio::spawn(async move {
+        println!("🔄 비동기 처리 시작: {}", data.name());
+
+        // 외부 API 호출 시뮬레이션
+        sleep(Duration::from_millis(500)).await;
+
+        // 이메일 발송 시뮬레이션
+        if data.name() == "email:send" {
+            println!("📧 이메일 발송 완료");
+        }
+
+        // 데이터베이스 저장 시뮬레이션
+        if data.name() == "data:save" {
+            sleep(Duration::from_millis(200)).await;
+            println!("💾 데이터 저장 완료");
+        }
+
+        println!("✅ 비동기 처리 완료: {}", data.name());
+    });
+
+    Ok(())
+});
+```
+
+### 이벤트 필터링
+
+```rust
+use orbital::event::{EventListener, EventCallback};
+use std::sync::Arc;
+
+// 특정 조건에 맞는 이벤트만 처리
+let filtered_callback: EventCallback = Arc::new(|event_data| {
+    // VIP 사용자만 처리
+    if let Some(user_data) = event_data.payload().get("user") {
+        if let Some(is_vip) = user_data.get("is_vip") {
+            if is_vip.as_bool().unwrap_or(false) {
+                println!("👑 VIP 사용자 이벤트: {}", event_data.payload());
+
+                // VIP 전용 처리
+                return Ok(());
+            }
+        }
+    }
+
+    // 높은 금액의 주문만 처리
+    if event_data.name() == "order:created" {
+        if let Some(amount) = event_data.payload().get("total_amount") {
+            if amount.as_f64().unwrap_or(0.0) > 1000.0 {
+                println!("💰 고액 주문 이벤트: {}", event_data.payload());
+
+                // 고액 주문 전용 처리 (승인 요청 등)
+                return Ok(());
+            }
+        }
+    }
+
+    // 조건에 맞지 않는 이벤트는 무시
+    Ok(())
+});
+
+let filtered_listener = EventListener::new("*", filtered_callback);  // 모든 이벤트 수신
+```
+
+## 이벤트 통계 및 모니터링
+
+### 이벤트 카운터
+
+```rust
+use orbital::event::{EventListener, EventCallback};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+// 이벤트 통계 수집
+let event_counter = Arc::new(Mutex::new(HashMap::<String, u64>::new()));
+
+let counter_clone = Arc::clone(&event_counter);
+let stats_callback: EventCallback = Arc::new(move |event_data| {
+    let mut counter = counter_clone.lock().unwrap();
+    *counter.entry(event_data.name().to_string()).or_insert(0) += 1;
+
+    // 100개마다 통계 출력
+    let total: u64 = counter.values().sum();
+    if total % 100 == 0 {
+        println!("📊 이벤트 통계 (총 {}개):", total);
+        for (event_name, count) in counter.iter() {
+            println!("  {}: {} 회", event_name, count);
+        }
+        println!();
+    }
+
+    Ok(())
+});
+
+// 모든 이벤트에 대해 통계 수집
+let stats_listener = EventListener::new("*", stats_callback);
+```
+
+### 성능 모니터링
+
+```rust
+use orbital::event::{EventListener, EventCallback};
+use std::time::Instant;
+use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+
+// 이벤트 처리 시간 측정
+let processing_times = Arc::new(Mutex::new(HashMap::<String, Vec<u128>>::new()));
+
+let times_clone = Arc::clone(&processing_times);
+let perf_callback: EventCallback = Arc::new(move |event_data| {
+    let start_time = Instant::now();
+
+    // 이벤트 처리 시뮬레이션
+    std::thread::sleep(std::time::Duration::from_millis(
+        fastrand::u64(10..100) // 10-100ms 랜덤 지연
+    ));
+
+    let elapsed = start_time.elapsed().as_millis();
+
+    // 처리 시간 기록
+    let mut times = times_clone.lock().unwrap();
+    times.entry(event_data.name().to_string())
+        .or_insert_with(Vec::new)
+        .push(elapsed);
+
+    // 100개 샘플마다 평균 계산
+    if let Some(samples) = times.get(event_data.name()) {
+        if samples.len() % 100 == 0 {
+            let avg = samples.iter().sum::<u128>() / samples.len() as u128;
+            println!("⏱️ {} 평균 처리 시간: {}ms", event_data.name(), avg);
+        }
+    }
+
+    Ok(())
+});
+```
+
+## 에러 처리
+
+### 이벤트 처리 에러 핸들링
+
+```rust
+use orbital::event::{EventListener, EventCallback, EventError};
+use std::sync::Arc;
+
+let error_handling_callback: EventCallback = Arc::new(|event_data| {
+    match event_data.name() {
+        "critical:error" => {
+            // 중요한 에러 처리
+            eprintln!("🚨 치명적 오류: {}", event_data.payload());
+
+            // 알림 발송, 로그 저장 등
+            // send_alert_notification(&event_data);
+            // save_error_to_database(&event_data);
+
+            // 처리 실패 시 에러 반환
+            if event_data.payload().get("severity").and_then(|v| v.as_str()) == Some("fatal") {
+                return Err(EventError::ProcessingFailed(
+                    "Fatal error requires immediate intervention".to_string()
+                ));
+            }
+        },
+        "user:action" => {
+            // 사용자 액션 검증
+            if event_data.payload().get("user_id").is_none() {
+                return Err(EventError::ProcessingFailed(
+                    "User ID is required for user actions".to_string()
+                ));
+            }
+
+            println!("👤 사용자 액션: {}", event_data.payload());
+        },
+        _ => {
+            // 일반 이벤트 처리
+            println!("📝 이벤트 처리: {}", event_data.name());
+        }
+    }
+
+    Ok(())
+});
+```
+
+## 다음 단계
+
+이벤트 시스템에 대해 알아보았다면, 다음 문서들을 확인해보세요:
+
+- [상태 모니터링](/docs/orbital/application/monitoring) - 애플리케이션 상태와 통계
+- [생명주기 관리](/docs/orbital/application/lifecycle) - 서버 시작, 중지, 재시작
+- [에러 처리](/docs/orbital/application/error-handling) - 에러 처리와 복구

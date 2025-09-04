@@ -1,0 +1,584 @@
+---
+title: '고급 라우팅'
+path: 'orbital/router/advanced'
+product: 'Orbital'
+category: 'Router'
+lastUpdate: 2025-09-05
+order: 24
+---
+
+## 개요
+
+Orbital Router의 고급 기능들을 활용하여 복잡한 라우팅 로직과 조건부 처리를 구현할 수 있습니다. 동적 라우팅, 조건부 라우팅, 성능 최적화 등을 다룹니다.
+
+## 동적 라우팅
+
+### 동적 라우트 생성
+
+```rust
+use orbital::router::{Router, RouteResponse};
+use std::sync::Arc;
+use std::collections::HashMap;
+
+fn create_dynamic_routes() -> Router {
+    let mut router = Router::new("Dynamic Router");
+
+    // 설정 기반 라우트 생성
+    let api_versions = vec!["v1", "v2", "v3"];
+    let resources = vec!["users", "posts", "comments"];
+
+    for version in &api_versions {
+        for resource in &resources {
+            let route_path = format!("/api/{}/{}", version, resource);
+            let version_clone = version.to_string();
+            let resource_clone = resource.to_string();
+
+            // READ 라우트
+            router.read(&route_path, Arc::new(move |_ctx| {
+                Ok(RouteResponse::json(serde_json::json!({
+                    "version": version_clone,
+                    "resource": resource_clone,
+                    "action": "list",
+                    "data": []
+                })))
+            }));
+
+            // CREATE 라우트
+            let create_path = route_path.clone();
+            let version_clone2 = version.to_string();
+            let resource_clone2 = resource.to_string();
+
+            router.create(&create_path, Arc::new(move |ctx| {
+                let body = ctx.body_json().unwrap_or_default();
+
+                Ok(RouteResponse::created(serde_json::json!({
+                    "version": version_clone2,
+                    "resource": resource_clone2,
+                    "action": "create",
+                    "data": body
+                })))
+            }));
+        }
+    }
+
+    router
+}
+```
+
+### 조건부 라우트 등록
+
+```rust
+use orbital::router::Router;
+
+struct RouteConfig {
+    feature_flags: HashMap<String, bool>,
+}
+
+impl RouteConfig {
+    fn new() -> Self {
+        let mut flags = HashMap::new();
+        flags.insert("experimental_api".to_string(), std::env::var("ENABLE_EXPERIMENTAL").is_ok());
+        flags.insert("admin_panel".to_string(), std::env::var("ENABLE_ADMIN").is_ok());
+        flags.insert("analytics".to_string(), std::env::var("ENABLE_ANALYTICS").is_ok());
+
+        Self { feature_flags: flags }
+    }
+
+    fn is_enabled(&self, feature: &str) -> bool {
+        self.feature_flags.get(feature).unwrap_or(&false).clone()
+    }
+}
+
+fn create_conditional_router() -> Router {
+    let mut router = Router::new("Conditional Router");
+    let config = RouteConfig::new();
+
+    // 기본 라우트들
+    router.read("/api/health", Arc::new(|_ctx| {
+        Ok(RouteResponse::json(serde_json::json!({
+            "status": "healthy"
+        })))
+    }));
+
+    // 실험적 기능
+    if config.is_enabled("experimental_api") {
+        router.read("/api/experimental/features", Arc::new(|_ctx| {
+            Ok(RouteResponse::json(serde_json::json!({
+                "features": ["feature_a", "feature_b"],
+                "warning": "This is an experimental API"
+            })))
+        }));
+    }
+
+    // 관리자 패널
+    if config.is_enabled("admin_panel") {
+        router.read("/admin/dashboard", Arc::new(|_ctx| {
+            Ok(RouteResponse::json(serde_json::json!({
+                "dashboard": "admin_data"
+            })))
+        }));
+    }
+
+    // 분석 기능
+    if config.is_enabled("analytics") {
+        router.read("/api/analytics/stats", Arc::new(|_ctx| {
+            Ok(RouteResponse::json(serde_json::json!({
+                "stats": {"requests": 1000, "errors": 5}
+            })))
+        }));
+    }
+
+    router
+}
+```
+
+## 라우트 매칭 최적화
+
+### 라우트 우선순위
+
+```rust
+use orbital::router::{Router, RouteResponse};
+
+let mut router = Router::new("Priority Router");
+
+// 구체적인 라우트를 먼저 등록 (높은 우선순위)
+router.read("/api/users/me", Arc::new(|_ctx| {
+    Ok(RouteResponse::json(serde_json::json!({
+        "user": "current_user_info"
+    })))
+}));
+
+router.read("/api/users/admin", Arc::new(|_ctx| {
+    Ok(RouteResponse::json(serde_json::json!({
+        "user": "admin_info"
+    })))
+}));
+
+// 일반적인 매개변수 라우트를 나중에 등록 (낮은 우선순위)
+router.read("/api/users/:id", Arc::new(|ctx| {
+    let user_id = ctx.param("id").unwrap_or("0".to_string());
+    Ok(RouteResponse::json(serde_json::json!({
+        "user": {
+            "id": user_id,
+            "name": format!("User {}", user_id)
+        }
+    })))
+}));
+
+// 와일드카드는 가장 마지막에 등록 (가장 낮은 우선순위)
+router.read("/api/*", Arc::new(|ctx| {
+    let path = ctx.param("*").unwrap_or("".to_string());
+    Ok(RouteResponse::json(serde_json::json!({
+        "message": "Catch-all route",
+        "path": path
+    })))
+}));
+```
+
+### 라우트 그룹 최적화
+
+```rust
+use orbital::router::Router;
+
+struct RouterBuilder {
+    base_router: Router,
+}
+
+impl RouterBuilder {
+    fn new(name: &str) -> Self {
+        Self {
+            base_router: Router::new(name),
+        }
+    }
+
+    fn add_crud_routes(mut self, resource: &str, base_path: &str) -> Self {
+        let resource_path = format!("{}/{}", base_path, resource);
+        let resource_id_path = format!("{}/:{}_id", resource_path, resource);
+
+        // LIST
+        let resource_clone = resource.to_string();
+        self.base_router.read(&resource_path, Arc::new(move |_ctx| {
+            Ok(RouteResponse::json(serde_json::json!({
+                "resource": resource_clone,
+                "action": "list",
+                "data": []
+            })))
+        }));
+
+        // CREATE
+        let resource_clone = resource.to_string();
+        self.base_router.create(&resource_path, Arc::new(move |ctx| {
+            Ok(RouteResponse::created(serde_json::json!({
+                "resource": resource_clone,
+                "action": "create",
+                "data": ctx.body_json().unwrap_or_default()
+            })))
+        }));
+
+        // READ
+        let resource_clone = resource.to_string();
+        let param_name = format!("{}_id", resource);
+        self.base_router.read(&resource_id_path, Arc::new(move |ctx| {
+            let id = ctx.param(&param_name).unwrap_or("0".to_string());
+            Ok(RouteResponse::json(serde_json::json!({
+                "resource": resource_clone,
+                "action": "read",
+                "id": id
+            })))
+        }));
+
+        // UPDATE
+        let resource_clone = resource.to_string();
+        let param_name = format!("{}_id", resource);
+        self.base_router.update(&resource_id_path, Arc::new(move |ctx| {
+            let id = ctx.param(&param_name).unwrap_or("0".to_string());
+            Ok(RouteResponse::json(serde_json::json!({
+                "resource": resource_clone,
+                "action": "update",
+                "id": id,
+                "data": ctx.body_json().unwrap_or_default()
+            })))
+        }));
+
+        // DELETE
+        let resource_clone = resource.to_string();
+        let param_name = format!("{}_id", resource);
+        self.base_router.remove(&resource_id_path, Arc::new(move |ctx| {
+            let id = ctx.param(&param_name).unwrap_or("0".to_string());
+            Ok(RouteResponse::json(serde_json::json!({
+                "resource": resource_clone,
+                "action": "delete",
+                "id": id
+            })))
+        }));
+
+        self
+    }
+
+    fn build(self) -> Router {
+        self.base_router
+    }
+}
+
+// 사용법
+let api_router = RouterBuilder::new("API Router")
+    .add_crud_routes("users", "/api")
+    .add_crud_routes("posts", "/api")
+    .add_crud_routes("comments", "/api")
+    .build();
+```
+
+## 조건부 라우팅
+
+### 헤더 기반 라우팅
+
+```rust
+use orbital::router::{Router, RouteResponse, Middleware};
+
+struct ContentTypeRouter;
+
+#[async_trait::async_trait]
+impl Middleware for ContentTypeRouter {
+    async fn handle(
+        &self,
+        req: LUNE,
+        next: Next,
+    ) -> Result<RouteResponse, Box<dyn std::error::Error>> {
+        let content_type = req.header().get_custom_field("Content-Type")
+            .unwrap_or("application/json");
+
+        match content_type {
+            "application/json" => {
+                // JSON 요청 처리
+                next.run(req).await
+            },
+            "application/xml" => {
+                // XML 요청 처리 (예시)
+                Ok(RouteResponse::json(serde_json::json!({
+                    "message": "XML processing not implemented",
+                    "content_type": content_type
+                })))
+            },
+            "text/plain" => {
+                // 텍스트 요청 처리
+                Ok(RouteResponse::text("Plain text response"))
+            },
+            _ => {
+                Ok(RouteResponse::error(415, "Unsupported Media Type"))
+            }
+        }
+    }
+}
+
+let mut router = Router::new("Content Type Router");
+router.use_middleware(ContentTypeRouter);
+```
+
+### 사용자 기반 라우팅
+
+```rust
+use orbital::router::{Router, RouteResponse, Middleware};
+
+struct UserBasedRouter;
+
+#[async_trait::async_trait]
+impl Middleware for UserBasedRouter {
+    async fn handle(
+        &self,
+        req: LUNE,
+        next: Next,
+    ) -> Result<RouteResponse, Box<dyn std::error::Error>> {
+        let user_type = req.body_json()
+            .and_then(|body| body.get("user_type"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("guest");
+
+        match user_type {
+            "admin" => {
+                // 관리자용 라우팅
+                let admin_response = RouteResponse::json(serde_json::json!({
+                    "message": "Admin access granted",
+                    "features": ["full_access", "user_management", "analytics"]
+                }));
+                Ok(admin_response)
+            },
+            "premium" => {
+                // 프리미엄 사용자용 라우팅
+                let premium_response = RouteResponse::json(serde_json::json!({
+                    "message": "Premium access granted",
+                    "features": ["advanced_features", "priority_support"]
+                }));
+                Ok(premium_response)
+            },
+            "user" => {
+                // 일반 사용자용 라우팅
+                next.run(req).await
+            },
+            _ => {
+                // 게스트용 제한된 응답
+                Ok(RouteResponse::json(serde_json::json!({
+                    "message": "Limited access for guests",
+                    "features": ["basic_features"]
+                })))
+            }
+        }
+    }
+}
+```
+
+## 성능 최적화
+
+### 라우트 캐싱
+
+```rust
+use orbital::router::{Router, RouteResponse, Middleware};
+use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH, Duration};
+
+struct RouteCache {
+    cache: Arc<Mutex<HashMap<String, (RouteResponse, u64)>>>,
+    ttl_seconds: u64,
+}
+
+impl RouteCache {
+    fn new(ttl_seconds: u64) -> Self {
+        Self {
+            cache: Arc::new(Mutex::new(HashMap::new())),
+            ttl_seconds,
+        }
+    }
+
+    fn get(&self, key: &str) -> Option<RouteResponse> {
+        let mut cache = self.cache.lock().unwrap();
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+
+        if let Some((response, timestamp)) = cache.get(key) {
+            if now - timestamp < self.ttl_seconds {
+                return Some(response.clone());
+            } else {
+                cache.remove(key);
+            }
+        }
+
+        None
+    }
+
+    fn set(&self, key: String, response: RouteResponse) {
+        let mut cache = self.cache.lock().unwrap();
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        cache.insert(key, (response, now));
+    }
+}
+
+struct CachingMiddleware {
+    cache: RouteCache,
+}
+
+impl CachingMiddleware {
+    fn new(ttl_seconds: u64) -> Self {
+        Self {
+            cache: RouteCache::new(ttl_seconds),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Middleware for CachingMiddleware {
+    async fn handle(
+        &self,
+        req: LUNE,
+        next: Next,
+    ) -> Result<RouteResponse, Box<dyn std::error::Error>> {
+        // 캐시 키 생성 (경로 + 쿼리 매개변수)
+        let cache_key = format!("{}:{}",
+            req.header().message_type(),
+            serde_json::to_string(&req.body()).unwrap_or_default()
+        );
+
+        // 캐시에서 확인
+        if let Some(cached_response) = self.cache.get(&cache_key) {
+            println!("📦 Cache hit for key: {}", cache_key);
+            return Ok(cached_response);
+        }
+
+        // 캐시 미스 - 실제 처리
+        let response = next.run(req).await?;
+
+        // 성공적인 응답만 캐시
+        if response.status() < 400 {
+            self.cache.set(cache_key.clone(), response.clone());
+            println!("💾 Cached response for key: {}", cache_key);
+        }
+
+        Ok(response)
+    }
+}
+
+// 사용법
+let mut router = Router::new("Cached Router");
+router.use_middleware(CachingMiddleware::new(300)); // 5분 TTL
+```
+
+### 비동기 라우트 처리
+
+```rust
+use orbital::router::{Router, RouteResponse};
+use tokio::time::{sleep, Duration};
+use std::sync::Arc;
+
+let mut async_router = Router::new("Async Router");
+
+// 비동기 데이터베이스 조회 시뮬레이션
+async_router.read("/api/users/:id", Arc::new(|ctx| async move {
+    let user_id = ctx.param("id").unwrap_or("0".to_string());
+
+    // 비동기 데이터베이스 조회 시뮬레이션
+    tokio::spawn(async move {
+        sleep(Duration::from_millis(100)).await;
+        println!("Database query completed for user {}", user_id);
+    }).await.unwrap();
+
+    Ok(RouteResponse::json(serde_json::json!({
+        "user": {
+            "id": user_id,
+            "name": format!("User {}", user_id),
+            "loaded_at": chrono::Utc::now().to_rfc3339()
+        }
+    })))
+}));
+
+// 병렬 처리
+async_router.read("/api/dashboard", Arc::new(|_ctx| async move {
+    // 여러 데이터 소스에서 병렬로 데이터 가져오기
+    let (users, posts, comments) = tokio::join!(
+        fetch_users(),
+        fetch_posts(),
+        fetch_comments()
+    );
+
+    Ok(RouteResponse::json(serde_json::json!({
+        "dashboard": {
+            "users": users?,
+            "posts": posts?,
+            "comments": comments?,
+            "generated_at": chrono::Utc::now().to_rfc3339()
+        }
+    })))
+}));
+
+async fn fetch_users() -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    sleep(Duration::from_millis(50)).await;
+    Ok(serde_json::json!({"count": 100}))
+}
+
+async fn fetch_posts() -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    sleep(Duration::from_millis(75)).await;
+    Ok(serde_json::json!({"count": 250}))
+}
+
+async fn fetch_comments() -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    sleep(Duration::from_millis(30)).await;
+    Ok(serde_json::json!({"count": 500}))
+}
+```
+
+## 라우트 테스팅
+
+### 라우트 단위 테스트
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use orbital::r#struct::LUNE;
+    use orbital::router::{Router, RouteContext};
+
+    #[tokio::test]
+    async fn test_user_route() {
+        let mut router = Router::new("Test Router");
+
+        router.read("/users/:id", Arc::new(|ctx| {
+            let user_id = ctx.param("id").unwrap_or("0".to_string());
+            Ok(RouteResponse::json(serde_json::json!({
+                "user_id": user_id
+            })))
+        }));
+
+        // 테스트용 LUNE 메시지 생성
+        let mut test_message = LUNE::new();
+        test_message.set_type("READ /users/123".to_string());
+        test_message.set_body(b"{}".to_vec());
+
+        let response = router.handle_message(&test_message, "test_connection".to_string()).unwrap();
+
+        assert!(response.is_handled());
+        // 추가 응답 검증...
+    }
+
+    #[tokio::test]
+    async fn test_error_handling() {
+        let mut router = Router::new("Error Test Router");
+
+        router.read("/error", Arc::new(|_ctx| {
+            Err("Test error".into())
+        }));
+
+        let mut test_message = LUNE::new();
+        test_message.set_type("READ /error".to_string());
+        test_message.set_body(b"{}".to_vec());
+
+        let result = router.handle_message(&test_message, "test_connection".to_string());
+
+        assert!(result.is_err());
+    }
+}
+```
+
+## 다음 단계
+
+고급 라우팅에 대해 알아보았다면, 다음 문서들을 확인해보세요:
+
+- [에러 처리](/docs/orbital/router/error-handling) - 라우트별 에러 처리
+- [미들웨어](/docs/orbital/router/middleware) - 미들웨어 체인과 커스텀 미들웨어
+- [Router 시작하기](/docs/orbital/router/getting-started) - 기본 라우팅

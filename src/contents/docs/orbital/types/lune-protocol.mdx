@@ -1,0 +1,479 @@
+---
+title: 'LUNE 프로토콜 구조체'
+path: 'orbital/types/lune-protocol'
+product: 'Orbital'
+category: 'Types'
+lastUpdate: 2025-09-05
+order: 41
+---
+
+## 개요
+
+LUNE 프로토콜의 핵심 데이터 구조체들을 다룹니다. LUNE 메시지와 헤더 구조, 직렬화 방법 등을 자세히 설명합니다.
+
+## LUNE 메시지 구조체
+
+### LUNE 메시지
+
+```rust
+use orbital::r#struct::LUNE;
+use orbital::r#struct::header::Header;
+use chrono::{DateTime, Utc};
+
+// LUNE 메시지 생성
+let mut lune_message = LUNE::new();
+
+// 헤더 설정
+lune_message.set_status(200);
+lune_message.set_origin("client".to_string());
+lune_message.set_nonce("abc123".to_string());
+lune_message.set_type("api_request".to_string());
+lune_message.set_datetime(Utc::now());
+
+// 바디 설정 (JSON)
+let body_data = serde_json::json!({
+    "path": "/api/users",
+    "method": "READ",
+    "params": {}
+});
+lune_message.set_body(body_data.to_string().into_bytes());
+
+println!("LUNE 메시지: {:?}", lune_message);
+```
+
+### LUNE 빌더 패턴
+
+```rust
+use orbital::r#struct::lune::LuneBuilder;
+use chrono::Utc;
+
+let lune_message = LuneBuilder::new()
+    .status(200)
+    .origin("server".to_string())
+    .nonce("xyz789".to_string())
+    .message_type("response".to_string())
+    .datetime(Utc::now())
+    .body(serde_json::json!({
+        "result": "success",
+        "data": {"user_id": 123}
+    }))
+    .build()?;
+
+println!("빌더로 생성된 LUNE: {:?}", lune_message);
+```
+
+## Header 구조체
+
+### 기본 헤더 사용
+
+```rust
+use orbital::r#struct::header::{Header, HeaderBuilder};
+use chrono::Utc;
+
+// 헤더 빌더 사용
+let header = HeaderBuilder::new()
+    .status(200)
+    .origin("server".to_string())
+    .nonce("xyz789".to_string())
+    .message_type("response".to_string())
+    .datetime(Utc::now())
+    .build()?;
+
+// 직접 생성
+let mut header = Header::new();
+header.set_status(404);
+header.set_origin("server".to_string());
+header.set_type("error_response".to_string());
+
+println!("헤더 정보: {:?}", header);
+```
+
+### 커스텀 헤더 필드
+
+```rust
+use orbital::r#struct::header::Header;
+
+let mut header = Header::new();
+
+// 기본 필드 설정
+header.set_status(200);
+header.set_origin("api_server".to_string());
+header.set_type("user_data".to_string());
+
+// 커스텀 필드 추가
+header.set_custom_field("User-Agent", "LUNE-Client/1.0");
+header.set_custom_field("Authorization", "Bearer token123");
+header.set_custom_field("X-Request-ID", "req_456");
+
+// 커스텀 필드 조회
+if let Some(user_agent) = header.get_custom_field("User-Agent") {
+    println!("User Agent: {}", user_agent);
+}
+
+// 모든 커스텀 필드 출력
+for (key, value) in header.custom_fields() {
+    println!("커스텀 헤더: {} = {}", key, value);
+}
+```
+
+## 헤더 필드 상세
+
+### 표준 헤더 필드
+
+```rust
+use orbital::r#struct::header::Header;
+use chrono::{Utc, DateTime};
+
+let mut header = Header::new();
+
+// Status (u16): HTTP 상태 코드와 유사
+header.set_status(200);  // 성공
+header.set_status(400);  // 잘못된 요청
+header.set_status(404);  // 찾을 수 없음
+header.set_status(500);  // 서버 오류
+
+// Origin (String): 메시지 발신자
+header.set_origin("client".to_string());     // 클라이언트
+header.set_origin("server".to_string());     // 서버
+header.set_origin("gateway".to_string());    // 게이트웨이
+
+// Nonce (String): 중복 방지를 위한 고유값
+header.set_nonce(uuid::Uuid::new_v4().to_string());
+header.set_nonce("request_12345".to_string());
+
+// Type (String): 메시지 타입
+header.set_type("READ /api/users".to_string());
+header.set_type("CREATE /api/posts".to_string());
+header.set_type("heartbeat".to_string());
+
+// DateTime (DateTime<Utc>): 메시지 생성 시간
+header.set_datetime(Utc::now());
+header.set_datetime(DateTime::parse_from_rfc3339("2023-12-01T12:00:00Z")?.with_timezone(&Utc));
+
+// 헤더 정보 출력
+println!("Status: {}", header.status());
+println!("Origin: {}", header.origin());
+println!("Nonce: {}", header.nonce());
+println!("Type: {}", header.message_type());
+println!("DateTime: {}", header.datetime());
+```
+
+### 헤더 검증
+
+```rust
+use orbital::r#struct::header::{Header, HeaderValidationError};
+
+fn validate_header(header: &Header) -> Result<(), HeaderValidationError> {
+    // 상태 코드 검증
+    if header.status() == 0 {
+        return Err(HeaderValidationError::InvalidStatus("Status cannot be zero".to_string()));
+    }
+
+    // Origin 검증
+    if header.origin().is_empty() {
+        return Err(HeaderValidationError::EmptyOrigin);
+    }
+
+    // Nonce 검증
+    if header.nonce().len() < 8 {
+        return Err(HeaderValidationError::InvalidNonce("Nonce too short".to_string()));
+    }
+
+    // 메시지 타입 검증
+    if header.message_type().is_empty() {
+        return Err(HeaderValidationError::EmptyMessageType);
+    }
+
+    // 시간 검증 (너무 오래된 메시지)
+    let now = chrono::Utc::now();
+    let age = now.signed_duration_since(header.datetime());
+    if age.num_minutes() > 5 {
+        return Err(HeaderValidationError::MessageTooOld(age.num_minutes()));
+    }
+
+    Ok(())
+}
+
+// 사용 예시
+let mut header = Header::new();
+header.set_status(200);
+header.set_origin("client".to_string());
+header.set_nonce("short".to_string()); // 너무 짧음
+header.set_type("test".to_string());
+header.set_datetime(chrono::Utc::now());
+
+match validate_header(&header) {
+    Ok(_) => println!("✅ 헤더 검증 통과"),
+    Err(e) => eprintln!("❌ 헤더 검증 실패: {:?}", e),
+}
+```
+
+## 메시지 바디 처리
+
+### JSON 바디
+
+```rust
+use orbital::r#struct::LUNE;
+use serde_json::{json, Value};
+
+let mut lune_message = LUNE::new();
+
+// JSON 바디 설정
+let json_body = json!({
+    "user": {
+        "id": 123,
+        "name": "Alice",
+        "email": "alice@example.com"
+    },
+    "action": "update_profile",
+    "timestamp": chrono::Utc::now().to_rfc3339()
+});
+
+lune_message.set_body(json_body.to_string().into_bytes());
+
+// JSON 바디 파싱
+let body_bytes = lune_message.body();
+let body_str = String::from_utf8(body_bytes.clone())?;
+let parsed_json: Value = serde_json::from_str(&body_str)?;
+
+println!("파싱된 JSON: {}", parsed_json);
+
+// 특정 필드 접근
+if let Some(user) = parsed_json.get("user") {
+    if let Some(name) = user.get("name") {
+        println!("사용자 이름: {}", name);
+    }
+}
+```
+
+### 바이너리 바디
+
+```rust
+use orbital::r#struct::LUNE;
+
+let mut lune_message = LUNE::new();
+
+// 바이너리 데이터 설정
+let binary_data = vec![0x48, 0x65, 0x6c, 0x6c, 0x6f]; // "Hello"
+lune_message.set_body(binary_data);
+
+// 바이너리 데이터 읽기
+let body = lune_message.body();
+let text = String::from_utf8(body.clone())
+    .unwrap_or_else(|_| format!("Binary data: {} bytes", body.len()));
+
+println!("바디 내용: {}", text);
+
+// 바이너리 데이터 처리
+for (i, byte) in body.iter().enumerate() {
+    println!("Byte {}: 0x{:02X} ({})", i, byte, *byte as char);
+}
+```
+
+### 구조화된 데이터
+
+```rust
+use orbital::r#struct::LUNE;
+use serde::{Serialize, Deserialize};
+
+#[derive(Debug, Serialize, Deserialize)]
+struct UserRequest {
+    action: String,
+    user_id: u64,
+    data: UserData,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct UserData {
+    name: String,
+    email: String,
+    age: Option<u32>,
+}
+
+// 구조화된 데이터를 LUNE 메시지로 변환
+let user_request = UserRequest {
+    action: "create_user".to_string(),
+    user_id: 0, // 새 사용자
+    data: UserData {
+        name: "Bob".to_string(),
+        email: "bob@example.com".to_string(),
+        age: Some(25),
+    },
+};
+
+let mut lune_message = LUNE::new();
+let serialized = serde_json::to_string(&user_request)?;
+lune_message.set_body(serialized.into_bytes());
+
+// LUNE 메시지에서 구조화된 데이터로 역변환
+let body_str = String::from_utf8(lune_message.body().clone())?;
+let deserialized: UserRequest = serde_json::from_str(&body_str)?;
+
+println!("역직렬화된 데이터: {:?}", deserialized);
+```
+
+## 메시지 유틸리티
+
+### 메시지 복제
+
+```rust
+use orbital::r#struct::LUNE;
+
+let mut original = LUNE::new();
+original.set_status(200);
+original.set_origin("client".to_string());
+original.set_type("test".to_string());
+
+// 메시지 복제
+let mut cloned = original.clone();
+
+// 복제본 수정
+cloned.set_status(201);
+cloned.set_origin("server".to_string());
+
+println!("원본 상태: {}", original.header().status());
+println!("복제본 상태: {}", cloned.header().status());
+```
+
+### 메시지 비교
+
+```rust
+use orbital::r#struct::LUNE;
+
+let mut msg1 = LUNE::new();
+msg1.set_status(200);
+msg1.set_nonce("abc123".to_string());
+
+let mut msg2 = LUNE::new();
+msg2.set_status(200);
+msg2.set_nonce("abc123".to_string());
+
+// 메시지 비교 (nonce 기준)
+fn messages_equal(msg1: &LUNE, msg2: &LUNE) -> bool {
+    msg1.header().nonce() == msg2.header().nonce()
+}
+
+if messages_equal(&msg1, &msg2) {
+    println!("✅ 메시지가 동일합니다");
+} else {
+    println!("❌ 메시지가 다릅니다");
+}
+```
+
+### 메시지 요약
+
+```rust
+use orbital::r#struct::LUNE;
+
+impl LUNE {
+    fn summary(&self) -> String {
+        format!(
+            "LUNE[{} {} {} | {} bytes]",
+            self.header().status(),
+            self.header().origin(),
+            self.header().message_type(),
+            self.body().len()
+        )
+    }
+
+    fn is_request(&self) -> bool {
+        self.header().origin() == "client"
+    }
+
+    fn is_response(&self) -> bool {
+        self.header().origin() == "server"
+    }
+
+    fn is_success(&self) -> bool {
+        self.header().status() >= 200 && self.header().status() < 300
+    }
+
+    fn is_error(&self) -> bool {
+        self.header().status() >= 400
+    }
+}
+
+// 사용 예시
+let mut message = LUNE::new();
+message.set_status(404);
+message.set_origin("server".to_string());
+message.set_type("error_response".to_string());
+message.set_body(b"Not found".to_vec());
+
+println!("메시지 요약: {}", message.summary());
+println!("요청 메시지? {}", message.is_request());
+println!("응답 메시지? {}", message.is_response());
+println!("성공? {}", message.is_success());
+println!("에러? {}", message.is_error());
+```
+
+## 메시지 검증
+
+### 완전성 검증
+
+```rust
+use orbital::r#struct::LUNE;
+
+#[derive(Debug)]
+enum MessageValidationError {
+    EmptyNonce,
+    InvalidStatus,
+    EmptyType,
+    EmptyBody,
+    InvalidTimestamp,
+}
+
+fn validate_message(message: &LUNE) -> Result<(), MessageValidationError> {
+    let header = message.header();
+
+    // Nonce 검증
+    if header.nonce().is_empty() {
+        return Err(MessageValidationError::EmptyNonce);
+    }
+
+    // 상태 코드 검증
+    if header.status() == 0 {
+        return Err(MessageValidationError::InvalidStatus);
+    }
+
+    // 메시지 타입 검증
+    if header.message_type().is_empty() {
+        return Err(MessageValidationError::EmptyType);
+    }
+
+    // 바디 검증
+    if message.body().is_empty() {
+        return Err(MessageValidationError::EmptyBody);
+    }
+
+    // 타임스탬프 검증 (5분 이내)
+    let now = chrono::Utc::now();
+    let age = now.signed_duration_since(header.datetime());
+    if age.num_minutes().abs() > 5 {
+        return Err(MessageValidationError::InvalidTimestamp);
+    }
+
+    Ok(())
+}
+
+// 검증 예시
+let mut message = LUNE::new();
+message.set_status(200);
+message.set_nonce("valid_nonce".to_string());
+message.set_type("test_message".to_string());
+message.set_body(b"test data".to_vec());
+message.set_datetime(chrono::Utc::now());
+
+match validate_message(&message) {
+    Ok(_) => println!("✅ 메시지 검증 통과"),
+    Err(e) => eprintln!("❌ 메시지 검증 실패: {:?}", e),
+}
+```
+
+## 다음 단계
+
+LUNE 프로토콜 구조체에 대해 알아보았다면, 다음 문서들을 확인해보세요:
+
+- [직렬화](/docs/orbital/types/serialization) - 메시지 직렬화와 역직렬화
+- [설정 타입](/docs/orbital/types/configuration) - ApplicationConfig와 관련 구조체
+- [요청/응답 타입](/docs/orbital/types/request-response) - RouteContext와 RouteResponse

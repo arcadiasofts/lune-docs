@@ -1,0 +1,11 @@
+---
+import { mdxComponents } from './mdx-components';
+
+interface Props {
+  Content: any;
+}
+
+const { Content } = Astro.props;
+---
+
+<Content components={mdxComponents} />

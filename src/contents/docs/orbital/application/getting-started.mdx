@@ -1,0 +1,200 @@
+---
+title: 'Application 시작하기'
+path: 'orbital/application/getting-started'
+product: 'Orbital'
+category: 'Application'
+lastUpdate: 2025-09-05
+order: 11
+---
+
+## 개요
+
+`OrbitApplication`은 Orbital 프레임워크의 핵심 컴포넌트로, LUNE 프로토콜 기반의 서버 애플리케이션을 구성하고 관리합니다. Express.js와 유사한 API를 제공하면서도 Rust의 성능과 안전성을 활용할 수 있습니다.
+
+## 기본 사용법
+
+### Application 생성
+
+```rust
+use orbital::application::OrbitApplication;
+
+// 기본 애플리케이션 생성
+let app = OrbitApplication::new(None, None, None);
+
+// 상세 정보와 함께 생성
+let app = OrbitApplication::new(
+    Some("My LUNE Server".to_string()),
+    Some("LUNE 프로토콜 기반 API 서버".to_string()),
+    Some("1.0.0".to_string())
+);
+
+// 최대 연결 수 제한
+let app = OrbitApplication::with_max_connections(
+    Some("Limited Server".to_string()),
+    Some("연결 제한이 있는 서버".to_string()),
+    Some("1.0.0".to_string()),
+    100  // 최대 100개 연결
+);
+```
+
+### 라우터 등록
+
+```rust
+use orbital::application::OrbitApplication;
+use orbital::router::{Router, RouteResponse};
+use serde_json::json;
+use std::sync::Arc;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = OrbitApplication::new(
+        Some("API Server".to_string()),
+        None,
+        None
+    );
+
+    // 메인 라우터 생성
+    let mut main_router = Router::new("Main Router");
+    main_router.read("/", Arc::new(|_ctx| {
+        Ok(RouteResponse::json(json!({
+            "message": "Welcome to LUNE API",
+            "version": "1.0.0"
+        })))
+    }));
+
+    // API 라우터 생성
+    let mut api_router = Router::with_base_path("API Router", "/api");
+    api_router.read("/health", Arc::new(|_ctx| {
+        Ok(RouteResponse::json(json!({
+            "status": "healthy",
+            "timestamp": chrono::Utc::now().timestamp()
+        })))
+    }));
+
+    // 라우터들 등록
+    app.register(main_router)?;
+    app.register(api_router)?;
+
+    // 또는 한번에 등록
+    // app.register_routers(vec![main_router, api_router])?;
+
+    println!("🚀 서버 시작...");
+    app.listen(8080).await?;
+
+    Ok(())
+}
+```
+
+## 빠른 시작 예제
+
+### 최소한의 서버
+
+```rust
+use orbital::application::OrbitApplication;
+use orbital::router::{Router, RouteResponse};
+use serde_json::json;
+use std::sync::Arc;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = OrbitApplication::new(
+        Some("Hello Server".to_string()),
+        None,
+        None
+    );
+
+    let mut router = Router::new("Hello Router");
+    router.read("/hello", Arc::new(|_ctx| {
+        Ok(RouteResponse::text("Hello, Orbital!"))
+    }));
+
+    app.register(router)?;
+    app.listen(3000).await?;
+
+    Ok(())
+}
+```
+
+### RESTful API 서버
+
+```rust
+use orbital::application::OrbitApplication;
+use orbital::router::{Router, RouteResponse};
+use serde_json::json;
+use std::sync::Arc;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = OrbitApplication::new(
+        Some("REST API Server".to_string()),
+        Some("RESTful API with LUNE protocol".to_string()),
+        Some("1.0.0".to_string())
+    );
+
+    let mut api_router = Router::with_base_path("API Router", "/api/v1");
+
+    // 사용자 목록 조회
+    api_router.read("/users", Arc::new(|_ctx| {
+        Ok(RouteResponse::json(json!({
+            "users": [
+                {"id": 1, "name": "Alice", "email": "alice@example.com"},
+                {"id": 2, "name": "Bob", "email": "bob@example.com"}
+            ]
+        })))
+    }));
+
+    // 사용자 생성
+    api_router.create("/users", Arc::new(|ctx| {
+        let name = ctx.body_field("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown");
+        let email = ctx.body_field("email")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        Ok(RouteResponse::created(json!({
+            "user": {
+                "id": 123,
+                "name": name,
+                "email": email,
+                "created_at": chrono::Utc::now().to_rfc3339()
+            }
+        })))
+    }));
+
+    // 특정 사용자 조회
+    api_router.read("/users/:id", Arc::new(|ctx| {
+        let user_id = ctx.param("id").unwrap_or("0".to_string());
+
+        Ok(RouteResponse::json(json!({
+            "user": {
+                "id": user_id.parse::<i32>().unwrap_or(0),
+                "name": format!("User {}", user_id),
+                "email": format!("user{}@example.com", user_id)
+            }
+        })))
+    }));
+
+    app.register(api_router)?;
+
+    println!("🚀 REST API 서버가 포트 8080에서 시작됩니다...");
+    println!("📡 사용 가능한 엔드포인트:");
+    println!("   READ   /api/v1/users     - 사용자 목록");
+    println!("   READ   /api/v1/users/:id - 특정 사용자");
+    println!("   CREATE /api/v1/users     - 사용자 생성");
+
+    app.listen(8080).await?;
+
+    Ok(())
+}
+```
+
+## 다음 단계
+
+애플리케이션의 기본 사용법을 익혔다면, 다음 문서들을 통해 더 고급 기능들을 살펴보세요:
+
+- [설정 관리](/docs/orbital/application/configuration) - 애플리케이션 설정과 빌더 패턴
+- [이벤트 시스템](/docs/orbital/application/events) - 이벤트 기반 아키텍처
+- [상태 모니터링](/docs/orbital/application/monitoring) - 애플리케이션 상태와 통계
+- [생명주기 관리](/docs/orbital/application/lifecycle) - 서버 시작, 중지, 재시작
+- [에러 처리](/docs/orbital/application/error-handling) - 에러 처리와 복구

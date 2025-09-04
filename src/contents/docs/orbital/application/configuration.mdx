@@ -1,0 +1,472 @@
+---
+title: '설정 관리'
+path: 'orbital/application/configuration'
+product: 'Orbital'
+category: 'Application'
+lastUpdate: 2025-09-05
+order: 12
+---
+
+## 개요
+
+Orbital 애플리케이션은 다양한 설정 옵션을 제공하여 서버 동작을 세밀하게 제어할 수 있습니다. 빌더 패턴을 사용하여 직관적으로 설정할 수 있습니다.
+
+## 기본 설정
+
+### ApplicationConfig
+
+```rust
+use orbital::application::{ApplicationConfig, ServerConfig, ConnectionConfig, LoggingConfig, LogLevel};
+
+// 기본 설정
+let mut config = ApplicationConfig::default();
+
+// 서버 설정
+config.server = ServerConfig {
+    host: "0.0.0.0".to_string(),
+    port: 8080,
+    workers: 4,
+    keep_alive: true,
+    timeout_seconds: 30,
+};
+
+// 연결 설정
+config.connection = ConnectionConfig {
+    max_connections: 1000,
+    heartbeat_interval_seconds: 30,
+    heartbeat_timeout_seconds: 60,
+    buffer_size: 8192,
+};
+
+// 로깅 설정
+config.logging = LoggingConfig {
+    level: LogLevel::Info,
+    console_output: true,
+    file_output: Some("app.log".to_string()),
+    structured_logging: true,
+};
+
+println!("애플리케이션 설정: {:?}", config);
+```
+
+## 빌더 패턴
+
+### OrbitApplicationBuilder
+
+```rust
+use orbital::application::{OrbitApplicationBuilder, ApplicationConfig, ServerConfig, ConnectionConfig, LoggingConfig, LogLevel};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // 설정 생성
+    let mut config = ApplicationConfig::default();
+
+    // 서버 설정
+    config.server = ServerConfig {
+        host: "0.0.0.0".to_string(),
+        port: 8080,
+        workers: 4,
+        keep_alive: true,
+        timeout_seconds: 30,
+    };
+
+    // 연결 설정
+    config.connection = ConnectionConfig {
+        max_connections: 1000,
+        heartbeat_interval_seconds: 30,
+        heartbeat_timeout_seconds: 60,
+        buffer_size: 8192,
+    };
+
+    // 로깅 설정
+    config.logging = LoggingConfig {
+        level: LogLevel::Info,
+        console_output: true,
+        file_output: Some("server.log".to_string()),
+        structured_logging: true,
+    };
+
+    // 빌더를 사용한 애플리케이션 생성
+    let app = OrbitApplicationBuilder::new()
+        .name("Production Server")
+        .description("프로덕션 LUNE 서버")
+        .version("2.0.0")
+        .config(config)
+        .build()?;
+
+    app.listen(8080).await?;
+
+    Ok(())
+}
+```
+
+## 서버 설정
+
+### ServerConfig 옵션
+
+```rust
+use orbital::application::ServerConfig;
+
+let server_config = ServerConfig {
+    host: "127.0.0.1".to_string(),    // 바인딩할 호스트 주소
+    port: 3000,                       // 포트 번호
+    workers: 8,                       // 워커 스레드 수
+    keep_alive: true,                 // Keep-Alive 연결 유지
+    timeout_seconds: 60,              // 연결 타임아웃 (초)
+};
+```
+
+### 환경별 서버 설정
+
+```rust
+use orbital::application::{OrbitApplication, ServerConfig};
+
+fn create_server_config(env: &str) -> ServerConfig {
+    match env {
+        "development" => ServerConfig {
+            host: "127.0.0.1".to_string(),
+            port: 3000,
+            workers: 2,
+            keep_alive: false,
+            timeout_seconds: 30,
+        },
+        "production" => ServerConfig {
+            host: "0.0.0.0".to_string(),
+            port: 8080,
+            workers: num_cpus::get(),
+            keep_alive: true,
+            timeout_seconds: 60,
+        },
+        _ => ServerConfig::default(),
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let env = std::env::var("ENVIRONMENT").unwrap_or_else(|_| "development".to_string());
+    let server_config = create_server_config(&env);
+
+    let mut app_config = ApplicationConfig::default();
+    app_config.server = server_config;
+
+    let app = OrbitApplicationBuilder::new()
+        .name("Environment-aware Server")
+        .config(app_config)
+        .build()?;
+
+    app.listen(app_config.server.port).await?;
+
+    Ok(())
+}
+```
+
+## 연결 설정
+
+### ConnectionConfig 옵션
+
+```rust
+use orbital::application::ConnectionConfig;
+
+let connection_config = ConnectionConfig {
+    max_connections: 500,             // 최대 동시 연결 수
+    heartbeat_interval_seconds: 30,   // 하트비트 간격 (초)
+    heartbeat_timeout_seconds: 90,    // 하트비트 타임아웃 (초)
+    buffer_size: 16384,               // 버퍼 크기 (바이트)
+};
+```
+
+### 고성능 연결 설정
+
+```rust
+use orbital::application::{OrbitApplication, ConnectionConfig};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let high_perf_config = ConnectionConfig {
+        max_connections: 10000,       // 대용량 연결 지원
+        heartbeat_interval_seconds: 15,  // 빠른 하트비트
+        heartbeat_timeout_seconds: 45,   // 짧은 타임아웃
+        buffer_size: 32768,           // 큰 버퍼
+    };
+
+    let mut app_config = ApplicationConfig::default();
+    app_config.connection = high_perf_config;
+
+    let app = OrbitApplicationBuilder::new()
+        .name("High Performance Server")
+        .config(app_config)
+        .build()?;
+
+    println!("🚀 고성능 서버 시작 (최대 연결: {})", app_config.connection.max_connections);
+    app.listen(8080).await?;
+
+    Ok(())
+}
+```
+
+## 로깅 설정
+
+### LoggingConfig 옵션
+
+```rust
+use orbital::application::{LoggingConfig, LogLevel};
+
+let logging_config = LoggingConfig {
+    level: LogLevel::Debug,                    // 로그 레벨
+    console_output: true,                      // 콘솔 출력 여부
+    file_output: Some("app.log".to_string()),  // 파일 출력 경로
+    structured_logging: true,                  // 구조화된 로깅 여부
+};
+```
+
+### 환경별 로깅 설정
+
+```rust
+use orbital::application::{LoggingConfig, LogLevel};
+
+fn create_logging_config(env: &str) -> LoggingConfig {
+    match env {
+        "development" => LoggingConfig {
+            level: LogLevel::Debug,
+            console_output: true,
+            file_output: None,
+            structured_logging: false,
+        },
+        "staging" => LoggingConfig {
+            level: LogLevel::Info,
+            console_output: true,
+            file_output: Some("staging.log".to_string()),
+            structured_logging: true,
+        },
+        "production" => LoggingConfig {
+            level: LogLevel::Warn,
+            console_output: false,
+            file_output: Some("/var/log/orbital/app.log".to_string()),
+            structured_logging: true,
+        },
+        _ => LoggingConfig::default(),
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let env = std::env::var("ENVIRONMENT").unwrap_or_else(|_| "development".to_string());
+    let logging_config = create_logging_config(&env);
+
+    let mut app_config = ApplicationConfig::default();
+    app_config.logging = logging_config;
+
+    let app = OrbitApplicationBuilder::new()
+        .name("Environment-aware Logger")
+        .config(app_config)
+        .build()?;
+
+    app.listen(8080).await?;
+
+    Ok(())
+}
+```
+
+## 설정 파일
+
+### TOML 설정 파일
+
+```toml
+# orbital.toml
+[application]
+name = "My LUNE Server"
+description = "LUNE 프로토콜 기반 서버"
+version = "1.0.0"
+
+[server]
+host = "0.0.0.0"
+port = 8080
+workers = 4
+keep_alive = true
+timeout_seconds = 30
+
+[connection]
+max_connections = 1000
+heartbeat_interval_seconds = 30
+heartbeat_timeout_seconds = 60
+buffer_size = 8192
+
+[logging]
+level = "info"
+console_output = true
+file_output = "server.log"
+structured_logging = true
+```
+
+### 설정 파일 로드
+
+```rust
+use orbital::application::{OrbitApplicationBuilder, ApplicationConfig};
+use serde::Deserialize;
+use std::fs;
+
+#[derive(Deserialize)]
+struct Config {
+    application: AppInfo,
+    server: ServerConfig,
+    connection: ConnectionConfig,
+    logging: LoggingConfig,
+}
+
+#[derive(Deserialize)]
+struct AppInfo {
+    name: String,
+    description: String,
+    version: String,
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // TOML 파일 로드
+    let config_content = fs::read_to_string("orbital.toml")?;
+    let config: Config = toml::from_str(&config_content)?;
+
+    // ApplicationConfig 생성
+    let app_config = ApplicationConfig {
+        name: config.application.name.clone(),
+        description: config.application.description.clone(),
+        version: config.application.version.clone(),
+        server: config.server,
+        connection: config.connection,
+        logging: config.logging,
+    };
+
+    // 애플리케이션 생성
+    let app = OrbitApplicationBuilder::new()
+        .name(&config.application.name)
+        .description(&config.application.description)
+        .version(&config.application.version)
+        .config(app_config)
+        .build()?;
+
+    println!("🚀 설정 파일로부터 서버 시작: {}", config.application.name);
+    app.listen(config.server.port).await?;
+
+    Ok(())
+}
+```
+
+## 환경 변수
+
+### 환경 변수를 통한 설정 오버라이드
+
+```rust
+use orbital::application::{OrbitApplicationBuilder, ApplicationConfig, ServerConfig, LogLevel};
+use std::env;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut config = ApplicationConfig::default();
+
+    // 환경 변수로 설정 오버라이드
+    if let Ok(host) = env::var("SERVER_HOST") {
+        config.server.host = host;
+    }
+
+    if let Ok(port_str) = env::var("SERVER_PORT") {
+        if let Ok(port) = port_str.parse::<u16>() {
+            config.server.port = port;
+        }
+    }
+
+    if let Ok(max_conn_str) = env::var("MAX_CONNECTIONS") {
+        if let Ok(max_conn) = max_conn_str.parse::<usize>() {
+            config.connection.max_connections = max_conn;
+        }
+    }
+
+    if let Ok(log_level_str) = env::var("LOG_LEVEL") {
+        config.logging.level = match log_level_str.to_lowercase().as_str() {
+            "trace" => LogLevel::Trace,
+            "debug" => LogLevel::Debug,
+            "info" => LogLevel::Info,
+            "warn" => LogLevel::Warn,
+            "error" => LogLevel::Error,
+            _ => LogLevel::Info,
+        };
+    }
+
+    let app = OrbitApplicationBuilder::new()
+        .name("Environment-configured Server")
+        .config(config)
+        .build()?;
+
+    println!("🚀 환경 변수 기반 서버 시작");
+    println!("   호스트: {}", app.config().server.host);
+    println!("   포트: {}", app.config().server.port);
+    println!("   최대 연결: {}", app.config().connection.max_connections);
+    println!("   로그 레벨: {:?}", app.config().logging.level);
+
+    app.listen(app.config().server.port).await?;
+
+    Ok(())
+}
+```
+
+## 설정 검증
+
+### 설정 유효성 검사
+
+```rust
+use orbital::application::{ApplicationConfig, ServerConfig, ConnectionConfig};
+
+fn validate_config(config: &ApplicationConfig) -> Result<(), String> {
+    // 서버 설정 검증
+    if config.server.port < 1024 && config.server.port != 0 {
+        return Err("포트 번호는 1024 이상이어야 합니다".to_string());
+    }
+
+    if config.server.workers == 0 {
+        return Err("워커 수는 1 이상이어야 합니다".to_string());
+    }
+
+    // 연결 설정 검증
+    if config.connection.max_connections == 0 {
+        return Err("최대 연결 수는 1 이상이어야 합니다".to_string());
+    }
+
+    if config.connection.heartbeat_interval_seconds >= config.connection.heartbeat_timeout_seconds {
+        return Err("하트비트 간격은 타임아웃보다 작아야 합니다".to_string());
+    }
+
+    if config.connection.buffer_size < 1024 {
+        return Err("버퍼 크기는 최소 1KB 이상이어야 합니다".to_string());
+    }
+
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let config = ApplicationConfig::default();
+
+    // 설정 검증
+    if let Err(error) = validate_config(&config) {
+        eprintln!("❌ 설정 오류: {}", error);
+        std::process::exit(1);
+    }
+
+    let app = OrbitApplicationBuilder::new()
+        .name("Validated Server")
+        .config(config)
+        .build()?;
+
+    println!("✅ 설정 검증 완료");
+    app.listen(8080).await?;
+
+    Ok(())
+}
+```
+
+## 다음 단계
+
+설정 관리에 대해 알아보았다면, 다음 문서들을 확인해보세요:
+
+- [이벤트 시스템](/docs/orbital/application/events) - 이벤트 기반 아키텍처
+- [상태 모니터링](/docs/orbital/application/monitoring) - 애플리케이션 상태와 통계
+- [생명주기 관리](/docs/orbital/application/lifecycle) - 서버 시작, 중지, 재시작

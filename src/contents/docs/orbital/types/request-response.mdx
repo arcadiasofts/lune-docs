@@ -1,0 +1,598 @@
+---
+title: '요청/응답 타입'
+path: 'orbital/types/request-response'
+product: 'Orbital'
+category: 'Types'
+lastUpdate: 2025-09-05
+order: 42
+---
+
+## 개요
+
+Orbital Router에서 사용되는 요청과 응답 관련 타입들을 다룹니다. RouteContext, RouteResponse, 그리고 관련 헬퍼 타입들의 사용법을 자세히 설명합니다.
+
+## RouteContext
+
+### 기본 사용법
+
+```rust
+use orbital::router::{RouteContext, RouteResponse};
+use serde_json::json;
+
+// 라우트 핸들러에서 컨텍스트 사용
+let handler = Arc::new(|ctx: RouteContext| -> Result<RouteResponse, Box<dyn std::error::Error>> {
+    // 경로 매개변수 접근
+    let user_id = ctx.param("id").unwrap_or("0".to_string());
+
+    // 바디 데이터 접근
+    let body_json = ctx.body_json()?;
+    let name = ctx.body_field("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown");
+
+    // LUNE 메시지 접근
+    let lune_message = ctx.lune_message();
+    let message_type = lune_message.header().message_type();
+
+    // 연결 ID
+    let connection_id = ctx.connection_id();
+
+    Ok(RouteResponse::json(json!({
+        "user_id": user_id,
+        "name": name,
+        "message_type": message_type,
+        "connection_id": connection_id
+    })))
+});
+```
+
+### 경로 매개변수 처리
+
+```rust
+use orbital::router::RouteContext;
+
+fn handle_user_route(ctx: RouteContext) -> Result<RouteResponse, Box<dyn std::error::Error>> {
+    // 단일 매개변수
+    let user_id = ctx.param("id")
+        .ok_or("Missing user ID")?;
+
+    // 매개변수 타입 변환
+    let user_id_num: u64 = user_id.parse()
+        .map_err(|_| "Invalid user ID format")?;
+
+    // 여러 매개변수
+    let category = ctx.param("category").unwrap_or("general".to_string());
+    let subcategory = ctx.param("subcategory").unwrap_or("default".to_string());
+
+    // 와일드카드 매개변수
+    let path = ctx.param("*").unwrap_or("".to_string());
+
+    Ok(RouteResponse::json(serde_json::json!({
+        "user_id": user_id_num,
+        "category": category,
+        "subcategory": subcategory,
+        "wildcard_path": path
+    })))
+}
+```
+
+### 요청 바디 처리
+
+```rust
+use orbital::router::{RouteContext, RouteResponse};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Deserialize)]
+struct CreateUserRequest {
+    name: String,
+    email: String,
+    age: Option<u32>,
+}
+
+#[derive(Debug, Serialize)]
+struct CreateUserResponse {
+    id: u64,
+    name: String,
+    email: String,
+    age: Option<u32>,
+    created_at: String,
+}
+
+fn create_user_handler(ctx: RouteContext) -> Result<RouteResponse, Box<dyn std::error::Error>> {
+    // JSON 바디 전체 파싱
+    let body_json = ctx.body_json()?;
+    let request: CreateUserRequest = serde_json::from_value(body_json)?;
+
+    // 또는 개별 필드 접근
+    let name = ctx.body_field("name")
+        .and_then(|v| v.as_str())
+        .ok_or("Name is required")?;
+
+    let email = ctx.body_field("email")
+        .and_then(|v| v.as_str())
+        .ok_or("Email is required")?;
+
+    let age = ctx.body_field("age")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u32);
+
+    // 사용자 생성 로직
+    let user_response = CreateUserResponse {
+        id: 123,
+        name: name.to_string(),
+        email: email.to_string(),
+        age,
+        created_at: chrono::Utc::now().to_rfc3339(),
+    };
+
+    Ok(RouteResponse::created(serde_json::to_value(user_response)?))
+}
+```
+
+### 요청 메타데이터 접근
+
+```rust
+use orbital::router::RouteContext;
+
+fn analyze_request(ctx: RouteContext) -> Result<RouteResponse, Box<dyn std::error::Error>> {
+    let lune_message = ctx.lune_message();
+    let header = lune_message.header();
+
+    // 헤더 정보
+    let status = header.status();
+    let origin = header.origin();
+    let nonce = header.nonce();
+    let message_type = header.message_type();
+    let timestamp = header.datetime();
+
+    // 커스텀 헤더
+    let user_agent = header.get_custom_field("User-Agent");
+    let auth_header = header.get_custom_field("Authorization");
+
+    // 바디 크기
+    let body_size = lune_message.body().len();
+
+    // 연결 정보
+    let connection_id = ctx.connection_id();
+
+    Ok(RouteResponse::json(serde_json::json!({
+        "request_analysis": {
+            "header": {
+                "status": status,
+                "origin": origin,
+                "nonce": nonce,
+                "message_type": message_type,
+                "timestamp": timestamp.to_rfc3339()
+            },
+            "custom_headers": {
+                "user_agent": user_agent,
+                "authorization": auth_header.is_some()
+            },
+            "body_size": body_size,
+            "connection_id": connection_id
+        }
+    })))
+}
+```
+
+## RouteResponse
+
+### 기본 응답 타입
+
+```rust
+use orbital::router::RouteResponse;
+use serde_json::json;
+
+// JSON 응답
+let json_response = RouteResponse::json(json!({
+    "message": "Success",
+    "data": {"id": 123, "name": "Alice"}
+}));
+
+// 텍스트 응답
+let text_response = RouteResponse::text("Hello, World!");
+
+// 에러 응답
+let error_response = RouteResponse::error(404, "User not found");
+
+// 생성 응답 (201 Created)
+let created_response = RouteResponse::created(json!({
+    "id": 456,
+    "created_at": chrono::Utc::now().to_rfc3339()
+}));
+
+// 빈 응답 (204 No Content)
+let empty_response = RouteResponse::empty();
+```
+
+### 커스텀 응답 구성
+
+```rust
+use orbital::router::RouteResponse;
+
+// 빌더 패턴을 사용한 커스텀 응답
+let custom_response = RouteResponse::new()
+    .status(201)
+    .header("Content-Type", "application/json")
+    .header("X-Custom-Header", "custom-value")
+    .header("Location", "/api/users/123")
+    .body(serde_json::json!({
+        "message": "Resource created successfully",
+        "id": 123
+    }).to_string().into_bytes());
+
+// 체이닝을 통한 응답 구성
+let chained_response = RouteResponse::json(serde_json::json!({"data": "test"}))
+    .status(200)
+    .header("Cache-Control", "max-age=3600")
+    .header("X-Response-Time", "25ms");
+```
+
+### 응답 헬퍼 메서드
+
+```rust
+use orbital::router::RouteResponse;
+use serde_json::json;
+
+// 성공 응답들
+let ok_response = RouteResponse::ok(json!({"status": "success"}));
+let accepted_response = RouteResponse::accepted(json!({"message": "Processing"}));
+let no_content_response = RouteResponse::no_content();
+
+// 리다이렉션 응답들
+let moved_permanently = RouteResponse::moved_permanently("/new-location");
+let found_response = RouteResponse::found("/temporary-location");
+
+// 클라이언트 에러 응답들
+let bad_request = RouteResponse::bad_request("Invalid input data");
+let unauthorized = RouteResponse::unauthorized("Authentication required");
+let forbidden = RouteResponse::forbidden("Access denied");
+let not_found = RouteResponse::not_found("Resource not found");
+let conflict = RouteResponse::conflict("Resource already exists");
+
+// 서버 에러 응답들
+let internal_error = RouteResponse::internal_server_error("Something went wrong");
+let not_implemented = RouteResponse::not_implemented("Feature not implemented");
+let service_unavailable = RouteResponse::service_unavailable("Service temporarily unavailable");
+```
+
+### 조건부 응답
+
+```rust
+use orbital::router::{RouteContext, RouteResponse};
+
+fn conditional_response(ctx: RouteContext) -> Result<RouteResponse, Box<dyn std::error::Error>> {
+    let user_type = ctx.body_field("user_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("guest");
+
+    match user_type {
+        "admin" => Ok(RouteResponse::json(serde_json::json!({
+            "message": "Admin access granted",
+            "permissions": ["read", "write", "delete", "admin"]
+        }))),
+        "user" => Ok(RouteResponse::json(serde_json::json!({
+            "message": "User access granted",
+            "permissions": ["read", "write"]
+        }))),
+        "guest" => Ok(RouteResponse::json(serde_json::json!({
+            "message": "Guest access granted",
+            "permissions": ["read"]
+        }))),
+        _ => Ok(RouteResponse::bad_request("Invalid user type"))
+    }
+}
+```
+
+## 고급 응답 패턴
+
+### 페이지네이션 응답
+
+```rust
+use orbital::router::RouteResponse;
+use serde::{Serialize, Deserialize};
+
+#[derive(Debug, Serialize)]
+struct PaginatedResponse<T> {
+    data: Vec<T>,
+    pagination: PaginationInfo,
+}
+
+#[derive(Debug, Serialize)]
+struct PaginationInfo {
+    current_page: u32,
+    per_page: u32,
+    total_items: u64,
+    total_pages: u32,
+    has_next: bool,
+    has_prev: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct User {
+    id: u64,
+    name: String,
+    email: String,
+}
+
+fn get_users_paginated(ctx: RouteContext) -> Result<RouteResponse, Box<dyn std::error::Error>> {
+    let page = ctx.body_field("page")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(1) as u32;
+
+    let per_page = ctx.body_field("per_page")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(10) as u32;
+
+    // 데이터 조회 (시뮬레이션)
+    let total_items = 100u64;
+    let total_pages = ((total_items as f64) / (per_page as f64)).ceil() as u32;
+
+    let users = vec![
+        User { id: 1, name: "Alice".to_string(), email: "alice@example.com".to_string() },
+        User { id: 2, name: "Bob".to_string(), email: "bob@example.com".to_string() },
+        // ... 더 많은 사용자
+    ];
+
+    let response = PaginatedResponse {
+        data: users,
+        pagination: PaginationInfo {
+            current_page: page,
+            per_page,
+            total_items,
+            total_pages,
+            has_next: page < total_pages,
+            has_prev: page > 1,
+        },
+    };
+
+    Ok(RouteResponse::json(serde_json::to_value(response)?))
+}
+```
+
+### 에러 응답 표준화
+
+```rust
+use orbital::router::RouteResponse;
+use serde::{Serialize, Deserialize};
+
+#[derive(Debug, Serialize)]
+struct ErrorResponse {
+    error: ErrorDetails,
+}
+
+#[derive(Debug, Serialize)]
+struct ErrorDetails {
+    code: String,
+    message: String,
+    details: Option<serde_json::Value>,
+    timestamp: String,
+    request_id: Option<String>,
+}
+
+impl ErrorResponse {
+    fn new(code: &str, message: &str) -> Self {
+        Self {
+            error: ErrorDetails {
+                code: code.to_string(),
+                message: message.to_string(),
+                details: None,
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                request_id: None,
+            }
+        }
+    }
+
+    fn with_details(mut self, details: serde_json::Value) -> Self {
+        self.error.details = Some(details);
+        self
+    }
+
+    fn with_request_id(mut self, request_id: String) -> Self {
+        self.error.request_id = Some(request_id);
+        self
+    }
+
+    fn to_response(self, status: u16) -> RouteResponse {
+        RouteResponse::json(serde_json::to_value(self).unwrap()).status(status)
+    }
+}
+
+fn validation_error_example(ctx: RouteContext) -> Result<RouteResponse, Box<dyn std::error::Error>> {
+    let name = ctx.body_field("name").and_then(|v| v.as_str());
+
+    if name.is_none() {
+        let error = ErrorResponse::new(
+            "VALIDATION_ERROR",
+            "Name field is required"
+        )
+        .with_details(serde_json::json!({
+            "field": "name",
+            "expected_type": "string",
+            "provided": null
+        }))
+        .with_request_id("req_123".to_string());
+
+        return Ok(error.to_response(400));
+    }
+
+    Ok(RouteResponse::json(serde_json::json!({
+        "message": "Validation passed",
+        "name": name.unwrap()
+    })))
+}
+```
+
+### 스트리밍 응답
+
+```rust
+use orbital::router::RouteResponse;
+
+fn stream_data(ctx: RouteContext) -> Result<RouteResponse, Box<dyn std::error::Error>> {
+    // 큰 데이터셋을 스트리밍으로 응답
+    let data_chunks = vec![
+        serde_json::json!({"chunk": 1, "data": "first chunk"}),
+        serde_json::json!({"chunk": 2, "data": "second chunk"}),
+        serde_json::json!({"chunk": 3, "data": "third chunk"}),
+    ];
+
+    // NDJSON (Newline Delimited JSON) 형태로 스트리밍
+    let mut streaming_data = String::new();
+    for chunk in data_chunks {
+        streaming_data.push_str(&chunk.to_string());
+        streaming_data.push('\n');
+    }
+
+    Ok(RouteResponse::new()
+        .status(200)
+        .header("Content-Type", "application/x-ndjson")
+        .header("Transfer-Encoding", "chunked")
+        .body(streaming_data.into_bytes()))
+}
+```
+
+## 응답 검증 및 테스팅
+
+### 응답 검증
+
+```rust
+use orbital::router::RouteResponse;
+
+fn validate_response(response: &RouteResponse) -> Result<(), String> {
+    // 상태 코드 검증
+    if response.status() == 0 {
+        return Err("Invalid status code".to_string());
+    }
+
+    // 필수 헤더 검증
+    if response.status() == 201 && !response.has_header("Location") {
+        return Err("Created response must have Location header".to_string());
+    }
+
+    // Content-Type 검증
+    if response.has_body() && !response.has_header("Content-Type") {
+        return Err("Response with body must have Content-Type header".to_string());
+    }
+
+    Ok(())
+}
+
+// 사용 예시
+let response = RouteResponse::created(serde_json::json!({"id": 123}))
+    .header("Location", "/api/users/123");
+
+match validate_response(&response) {
+    Ok(_) => println!("✅ 응답 검증 통과"),
+    Err(e) => eprintln!("❌ 응답 검증 실패: {}", e),
+}
+```
+
+### 응답 테스트 헬퍼
+
+```rust
+use orbital::router::RouteResponse;
+
+#[cfg(test)]
+mod response_tests {
+    use super::*;
+
+    fn assert_json_response(response: &RouteResponse, expected_status: u16) {
+        assert_eq!(response.status(), expected_status);
+        assert!(response.has_header("Content-Type"));
+
+        let content_type = response.get_header("Content-Type").unwrap();
+        assert!(content_type.contains("application/json"));
+    }
+
+    fn assert_error_response(response: &RouteResponse, expected_status: u16, expected_code: &str) {
+        assert_json_response(response, expected_status);
+
+        let body_str = String::from_utf8(response.body().clone()).unwrap();
+        let body_json: serde_json::Value = serde_json::from_str(&body_str).unwrap();
+
+        assert_eq!(body_json["error"]["code"], expected_code);
+    }
+
+    #[test]
+    fn test_success_response() {
+        let response = RouteResponse::json(serde_json::json!({"success": true}));
+        assert_json_response(&response, 200);
+    }
+
+    #[test]
+    fn test_error_response() {
+        let response = RouteResponse::error(404, "Not found");
+        assert_error_response(&response, 404, "NOT_FOUND");
+    }
+}
+```
+
+## 성능 최적화
+
+### 응답 캐싱
+
+```rust
+use orbital::router::RouteResponse;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+struct ResponseCache {
+    cache: Arc<Mutex<HashMap<String, (RouteResponse, std::time::Instant)>>>,
+    ttl: std::time::Duration,
+}
+
+impl ResponseCache {
+    fn new(ttl_seconds: u64) -> Self {
+        Self {
+            cache: Arc::new(Mutex::new(HashMap::new())),
+            ttl: std::time::Duration::from_secs(ttl_seconds),
+        }
+    }
+
+    fn get(&self, key: &str) -> Option<RouteResponse> {
+        let mut cache = self.cache.lock().unwrap();
+
+        if let Some((response, timestamp)) = cache.get(key) {
+            if timestamp.elapsed() < self.ttl {
+                return Some(response.clone());
+            } else {
+                cache.remove(key);
+            }
+        }
+
+        None
+    }
+
+    fn set(&self, key: String, response: RouteResponse) {
+        let mut cache = self.cache.lock().unwrap();
+        cache.insert(key, (response, std::time::Instant::now()));
+    }
+}
+
+// 캐시를 사용한 핸들러
+fn cached_handler(ctx: RouteContext, cache: &ResponseCache) -> Result<RouteResponse, Box<dyn std::error::Error>> {
+    let cache_key = format!("user_{}", ctx.param("id").unwrap_or("0"));
+
+    // 캐시에서 확인
+    if let Some(cached_response) = cache.get(&cache_key) {
+        return Ok(cached_response.header("X-Cache", "HIT"));
+    }
+
+    // 캐시 미스 - 새로 생성
+    let response = RouteResponse::json(serde_json::json!({
+        "user": {"id": ctx.param("id"), "name": "Cached User"}
+    })).header("X-Cache", "MISS");
+
+    cache.set(cache_key, response.clone());
+
+    Ok(response)
+}
+```
+
+## 다음 단계
+
+요청/응답 타입에 대해 알아보았다면, 다음 문서들을 확인해보세요:
+
+- [설정 타입](/docs/orbital/types/configuration) - ApplicationConfig와 관련 구조체
+- [이벤트 구조체](/docs/orbital/types/events) - EventData, EventCallback 등
+- [LUNE 프로토콜 구조체](/docs/orbital/types/lune-protocol) - LUNE 메시지와 헤더 구조

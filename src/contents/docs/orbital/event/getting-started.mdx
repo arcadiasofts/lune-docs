@@ -1,0 +1,463 @@
+---
+title: 'Event System 시작하기'
+path: 'orbital/event/getting-started'
+product: 'Orbital'
+category: 'Event'
+lastUpdate: 2025-09-05
+order: 31
+---
+
+## 개요
+
+Orbital의 이벤트 시스템은 애플리케이션 전반에서 발생하는 다양한 이벤트를 처리하고 관리하는 기능을 제공합니다. 연결 상태 변화, 라우터 등록, 로그 이벤트 등을 효율적으로 처리할 수 있습니다.
+
+## 핵심 컴포넌트
+
+### EventEmitter
+
+이벤트를 발생시키고 리스너에게 전달하는 중앙 관리자입니다.
+
+```rust
+use orbital::event::{EventEmitter, EventData};
+use serde_json::json;
+use std::sync::Arc;
+
+// 이벤트 에미터 생성
+let emitter = Arc::new(EventEmitter::new());
+
+// 이벤트 발생
+let event_data = EventData::new("user:login", json!({
+    "user_id": 123,
+    "timestamp": chrono::Utc::now().to_rfc3339()
+}));
+
+emitter.emit_event_data(&event_data)?;
+```
+
+### EventListener
+
+특정 이벤트를 수신하고 처리하는 리스너입니다.
+
+```rust
+use orbital::event::{EventListener, EventCallback};
+use std::sync::Arc;
+
+// 콜백 함수 정의
+let callback: EventCallback = Arc::new(|event_data| {
+    println!("이벤트 수신: {}", event_data.name());
+    println!("데이터: {}", event_data.payload());
+    Ok(())
+});
+
+// 리스너 생성 및 등록
+let listener = EventListener::new("user:login", callback);
+emitter.add_listener(listener)?;
+```
+
+## 기본 사용법
+
+### 1. 이벤트 리스너 등록
+
+```rust
+use orbital::application::OrbitApplication;
+use orbital::event::{EventListener, EventCallback};
+use serde_json::json;
+use std::sync::Arc;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = OrbitApplication::new(
+        Some("Event App".to_string()),
+        None,
+        None
+    );
+
+    // 이벤트 에미터 가져오기
+    let emitter = app.event_emitter();
+
+    // 연결 이벤트 리스너
+    let connection_callback: EventCallback = Arc::new(|event_data| {
+        println!("🔗 연결 이벤트: {}", event_data.payload());
+        Ok(())
+    });
+
+    let connection_listener = EventListener::new("connection:new", connection_callback);
+    emitter.add_listener(connection_listener)?;
+
+    // 라우터 이벤트 리스너
+    let router_callback: EventCallback = Arc::new(|event_data| {
+        println!("🛣️ 라우터 이벤트: {}", event_data.payload());
+        Ok(())
+    });
+
+    let router_listener = EventListener::new("router:registered", router_callback);
+    emitter.add_listener(router_listener)?;
+
+    // 애플리케이션 시작
+    app.listen(8080).await?;
+
+    Ok(())
+}
+```
+
+### 2. 커스텀 이벤트 발생
+
+```rust
+use orbital::application::OrbitApplication;
+use serde_json::json;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let app = OrbitApplication::new(None, None, None);
+
+    // 커스텀 이벤트 발생
+    app.emit_event("user:action", json!({
+        "action": "purchase",
+        "user_id": 456,
+        "item_id": "product_123",
+        "amount": 29.99,
+        "timestamp": chrono::Utc::now().to_rfc3339()
+    }));
+
+    // 에러 이벤트 발생
+    app.emit_event("error:occurred", json!({
+        "error_type": "validation",
+        "message": "Invalid input data",
+        "context": {
+            "field": "email",
+            "value": "invalid-email"
+        }
+    }));
+
+    Ok(())
+}
+```
+
+## 내장 이벤트
+
+Orbital은 다음과 같은 내장 이벤트들을 자동으로 발생시킵니다:
+
+### 애플리케이션 이벤트
+
+```rust
+// 애플리케이션 시작
+app.emit_event("app:started", json!({
+    "name": app.name(),
+    "version": app.version(),
+    "port": 8080
+}));
+
+// 애플리케이션 중지
+app.emit_event("app:stopped", json!({
+    "uptime_seconds": 3600,
+    "connections_handled": 1250
+}));
+```
+
+### 연결 이벤트
+
+```rust
+// 새로운 연결
+app.emit_event("connection:new", json!({
+    "connection_id": "conn_123",
+    "remote_addr": "192.168.1.100:54321",
+    "timestamp": chrono::Utc::now().to_rfc3339()
+}));
+
+// 연결 종료
+app.emit_event("connection:closed", json!({
+    "connection_id": "conn_123",
+    "duration_seconds": 120,
+    "bytes_sent": 1024,
+    "bytes_received": 512
+}));
+
+// 하트비트 타임아웃
+app.emit_event("connection:heartbeat_timeout", json!({
+    "connection_id": "conn_123",
+    "last_heartbeat": "2023-12-01T10:30:00Z"
+}));
+```
+
+### 라우터 이벤트
+
+```rust
+// 라우터 등록
+app.emit_event("router:registered", json!({
+    "router_name": "API Router",
+    "base_path": "/api",
+    "route_count": 15
+}));
+
+// 라우트 매칭 성공
+app.emit_event("route:matched", json!({
+    "path": "/api/users/123",
+    "method": "READ",
+    "router": "API Router",
+    "handler_time_ms": 25
+}));
+
+// 라우트 매칭 실패
+app.emit_event("route:not_found", json!({
+    "path": "/api/unknown",
+    "method": "READ",
+    "available_routes": ["/api/users", "/api/posts"]
+}));
+```
+
+### 로그 이벤트
+
+```rust
+use orbital::application::config::LogLevel;
+
+// 다양한 로그 레벨
+app.log(LogLevel::Info, "사용자 로그인 성공", Some(json!({
+    "user_id": 123,
+    "ip_address": "192.168.1.100"
+})));
+
+app.log(LogLevel::Error, "데이터베이스 연결 실패", Some(json!({
+    "error": "Connection timeout",
+    "retry_count": 3
+})));
+
+app.log(LogLevel::Warn, "메모리 사용량 높음", Some(json!({
+    "memory_usage_mb": 512,
+    "threshold_mb": 400
+})));
+```
+
+## 이벤트 처리 패턴
+
+### 다중 이벤트 리스너
+
+```rust
+use orbital::application::OrbitApplication;
+use orbital::event::{EventListener, EventCallback};
+use std::sync::Arc;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let app = OrbitApplication::new(
+        Some("Multi-Event Server".to_string()),
+        None,
+        None
+    );
+
+    let emitter = app.event_emitter();
+
+    // 모든 연결 관련 이벤트 처리
+    let connection_events = vec![
+        "connection:new",
+        "connection:closed",
+        "connection:heartbeat_timeout"
+    ];
+
+    for event_name in connection_events {
+        let callback: EventCallback = Arc::new(move |event_data| {
+            println!("🔗 연결 이벤트 [{}]: {}", event_data.name(), event_data.payload());
+            Ok(())
+        });
+
+        let listener = EventListener::new(event_name, callback);
+        emitter.add_listener(listener)?;
+    }
+
+    // 모든 로그 이벤트 처리
+    let log_events = vec![
+        "log:info",
+        "log:warn",
+        "log:error",
+        "log:debug"
+    ];
+
+    for event_name in log_events {
+        let callback: EventCallback = Arc::new(move |event_data| {
+            let level = event_data.name().split(':').nth(1).unwrap_or("unknown");
+            println!("📝 [{}] {}", level.to_uppercase(), event_data.payload());
+            Ok(())
+        });
+
+        let listener = EventListener::new(event_name, callback);
+        emitter.add_listener(listener)?;
+    }
+
+    app.listen(8080).await?;
+
+    Ok(())
+}
+```
+
+### 이벤트 필터링
+
+```rust
+use orbital::event::{EventListener, EventCallback};
+use std::sync::Arc;
+
+// 특정 조건에 맞는 이벤트만 처리
+let filtered_callback: EventCallback = Arc::new(|event_data| {
+    if let Some(user_id) = event_data.payload().get("user_id") {
+        if user_id.as_i64().unwrap_or(0) > 1000 {
+            println!("VIP 사용자 이벤트: {}", event_data.payload());
+        }
+    }
+    Ok(())
+});
+
+let listener = EventListener::new("user:action", filtered_callback);
+emitter.add_listener(listener)?;
+```
+
+## 비동기 이벤트 처리
+
+### 비동기 콜백
+
+```rust
+use orbital::event::{EventListener, EventCallback};
+use tokio::time::{sleep, Duration};
+use std::sync::Arc;
+
+// 비동기 작업을 수행하는 이벤트 콜백
+let async_callback: EventCallback = Arc::new(|event_data| {
+    let data = event_data.clone();
+
+    // 별도 태스크에서 비동기 처리
+    tokio::spawn(async move {
+        println!("🔄 비동기 처리 시작: {}", data.name());
+
+        // 외부 API 호출 시뮬레이션
+        sleep(Duration::from_millis(500)).await;
+
+        // 이메일 발송 시뮬레이션
+        if data.name() == "email:send" {
+            println!("📧 이메일 발송 완료");
+        }
+
+        // 데이터베이스 저장 시뮬레이션
+        if data.name() == "data:save" {
+            sleep(Duration::from_millis(200)).await;
+            println!("💾 데이터 저장 완료");
+        }
+
+        println!("✅ 비동기 처리 완료: {}", data.name());
+    });
+
+    Ok(())
+});
+```
+
+## 에러 처리
+
+### 이벤트 에러 핸들링
+
+```rust
+use orbital::event::{EventListener, EventCallback, EventError};
+use std::sync::Arc;
+
+let error_handling_callback: EventCallback = Arc::new(|event_data| {
+    match event_data.name() {
+        "critical:error" => {
+            // 중요한 에러 처리
+            eprintln!("🚨 치명적 오류: {}", event_data.payload());
+
+            // 알림 발송, 로그 저장 등
+            return Err(EventError::ProcessingFailed(
+                "Critical error handling failed".to_string()
+            ));
+        },
+        _ => {
+            // 일반 처리
+            println!("이벤트 처리: {}", event_data.name());
+        }
+    }
+
+    Ok(())
+});
+```
+
+### 이벤트 발생 실패 처리
+
+```rust
+// 이벤트 발생 시 에러 처리
+match app.event_emitter().emit_event("test:event", json!({"test": true})) {
+    Ok(_) => println!("이벤트 발생 성공"),
+    Err(e) => eprintln!("이벤트 발생 실패: {}", e),
+}
+```
+
+## 실용적인 예제
+
+### 사용자 활동 추적
+
+```rust
+use orbital::application::OrbitApplication;
+use orbital::event::{EventListener, EventCallback};
+use serde_json::json;
+use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let app = OrbitApplication::new(
+        Some("Activity Tracker".to_string()),
+        None,
+        None
+    );
+
+    let emitter = app.event_emitter();
+
+    // 사용자 활동 통계 저장소
+    let user_stats = Arc::new(Mutex::new(HashMap::<u64, u32>::new()));
+
+    // 사용자 활동 추적 리스너
+    let stats_clone = Arc::clone(&user_stats);
+    let activity_callback: EventCallback = Arc::new(move |event_data| {
+        if let Some(user_id) = event_data.payload().get("user_id") {
+            if let Some(id) = user_id.as_u64() {
+                let mut stats = stats_clone.lock().unwrap();
+                *stats.entry(id).or_insert(0) += 1;
+
+                println!("👤 사용자 {} 활동 증가: {} 회",
+                    id,
+                    stats.get(&id).unwrap_or(&0)
+                );
+            }
+        }
+        Ok(())
+    });
+
+    let activity_listener = EventListener::new("user:action", activity_callback);
+    emitter.add_listener(activity_listener)?;
+
+    // 테스트용 사용자 활동 이벤트 발생
+    tokio::spawn({
+        let app_clone = app.clone();
+        async move {
+            for i in 1..=10 {
+                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+                app_clone.emit_event("user:action", json!({
+                    "user_id": (i % 3) + 1, // 사용자 1, 2, 3 순환
+                    "action": "page_view",
+                    "page": format!("/page_{}", i),
+                    "timestamp": chrono::Utc::now().to_rfc3339()
+                }));
+            }
+        }
+    });
+
+    app.listen(8080).await?;
+
+    Ok(())
+}
+```
+
+## 다음 단계
+
+Event System의 기본 사용법을 익혔다면, 다음 문서들을 통해 더 고급 기능들을 살펴보세요:
+
+- [이벤트 리스너](/docs/orbital/event/listeners) - 리스너 등록과 관리
+- [커스텀 이벤트](/docs/orbital/event/custom-events) - 커스텀 이벤트 생성과 처리
+- [이벤트 패턴](/docs/orbital/event/patterns) - 이벤트 체이닝과 필터링
+- [성능 최적화](/docs/orbital/event/performance) - 이벤트 시스템 최적화

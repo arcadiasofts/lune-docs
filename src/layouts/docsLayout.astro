@@ -1,0 +1,95 @@
+---
+import DocsSidebar from '@/components/docs/sidebar';
+
+// 타입 정의
+interface DocModule {
+  frontmatter: {
+    title: string;
+    category: string;
+    product: string;
+    lastUpdate: Date;
+  };
+}
+
+interface ProcessedDoc {
+  id: string;
+  collection: 'docs';
+  data: {
+    title: string;
+    category: string;
+    product: string;
+    lastUpdate: Date;
+  };
+  filePath: string;
+}
+
+type Sidebar = Record<string, Record<string, ProcessedDoc[]>>;
+
+// docs 컬렉션에서 모든 문서를 가져옴
+const docModules = import.meta.glob('../contents/docs/**/*.{md,mdx}', {
+  eager: true,
+});
+
+const docs = Object.entries(docModules).map(([filePath, mod]) => {
+  const { frontmatter: data } = mod as DocModule;
+  const fileName = filePath.replace(/\.(md|mdx)$/, '').replace('/contents', '');
+  return {
+    id: fileName,
+    collection: 'docs' as const,
+    data,
+    filePath: fileName,
+  };
+});
+
+// product별로 그룹화, 각 product 안에 category별로 그룹화
+const sidebar: Sidebar = docs.reduce((acc, doc) => {
+  const { product, category } = doc.data;
+  if (!acc[product]) acc[product] = {};
+  if (category) {
+    if (!acc[product][category]) acc[product][category] = [];
+    acc[product][category].push(doc);
+  } else {
+    if (!acc[product]['_noCategory']) acc[product]['_noCategory'] = [];
+    acc[product]['_noCategory'].push(doc);
+  }
+  return acc;
+}, {} as Sidebar);
+---
+
+<div class="border-t-border border-t">
+  <div class="mx-auto flex">
+    <aside class="border-border w-64 border-r px-4 py-8">
+      <nav>
+        <DocsSidebar sidebar={sidebar} client:only="react" />
+      </nav>
+    </aside>
+    <div
+      class="[&::-webkit-scrollbar-track]:bg-secondary [&::-webkit-scrollbar-thumb]:bg-border overflow-y-scroll-y h-full flex-1 px-8 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:rounded-full"
+    >
+      <slot />
+    </div>
+  </div>
+  <script is:inline>
+    function setHeaderHeightVar() {
+      const header = document.getElementById('global-header');
+      if (header) {
+        const height = header.offsetHeight;
+        document.documentElement.style.setProperty(
+          '--global-header-height',
+          height + 'px'
+        );
+      }
+    }
+    setHeaderHeightVar();
+    window.addEventListener('resize', setHeaderHeightVar);
+    const header = document.getElementById('global-header');
+    if (header && typeof MutationObserver !== 'undefined') {
+      const observer = new MutationObserver(setHeaderHeightVar);
+      observer.observe(header, {
+        attributes: true,
+        childList: true,
+        subtree: true,
+      });
+    }
+  </script>
+</div>

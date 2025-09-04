@@ -1,0 +1,233 @@
+---
+import Layout from "../../../layouts/Layout.astro";
+import { type GetStaticPaths, type MDXInstance } from "astro";
+import { basename, extname } from "node:path";
+import "@/styles/global.css";
+import { mdxComponents } from '@/components/mdx/mdx-components';
+
+// MDX frontmatter의 타입을 정의합니다.
+interface Frontmatter {
+  title: string;
+  pubDate: string | Date;
+  author: string;
+}
+
+// Astro.glob()이 반환하는 MDX 모듈의 타입을 정의합니다.
+type BlogModule = MDXInstance<Frontmatter>;
+
+export const getStaticPaths = (async () => {
+  const blogs: BlogModule[] = await Astro.glob("../../../contents/blog/**/*.{md,mdx}");
+
+  const sorted = blogs
+    .map((blog) => ({
+      ...blog,
+      id: basename(blog.file, extname(blog.file)),
+      pubDate: new Date(blog.frontmatter.pubDate),
+      fileName: basename(blog.file, extname(blog.file)),
+    }))
+    .sort((a, b) => b.pubDate.getTime() - a.pubDate.getTime());
+
+  return sorted.map((blog, idx) => {
+    const prev = sorted[idx + 1]
+      ? {
+          id: sorted[idx + 1].id,
+          title: sorted[idx + 1].frontmatter.title,
+        }
+      : null;
+    const next = sorted[idx - 1]
+      ? {
+          id: sorted[idx - 1].id,
+          title: sorted[idx - 1].frontmatter.title,
+        }
+      : null;
+
+    return {
+      params: { id: blog.id },
+      props: {
+        blog,
+        prev,
+        next,
+        fileName: blog.fileName,
+      },
+    };
+  });
+}) satisfies GetStaticPaths;
+
+const { blog, prev, next, fileName } = Astro.props;
+const { Content, frontmatter } = blog;
+---
+
+<Layout>
+  <main class="max-w-[1200px] mx-auto py-10 px-4 md:px-20">
+    {fileName && (
+      <div
+        class="w-full mb-6 flex items-center justify-center"
+        style="
+          height:12rem;
+          border-radius: 12px;
+          position: relative;
+          overflow: hidden;
+          background: #e0e7ef; /* fallback */
+        "
+        id="blog-thumbnail-bg"
+      >
+        <img
+          src={`/blog/thumbnails/${fileName}.png`}
+          alt={frontmatter.title}
+          loading="lazy"
+          class="h-full"
+          style="
+            border-radius:10px;
+            box-shadow: 0 4px 24px 0 rgba(0,0,0,0.08);
+            background: transparent;
+            object-fit: cover;
+            position: relative;
+            z-index: 2;
+            transition: background 0.3s;
+          "
+          id="blog-thumbnail-img"
+        />
+        <script is:inline>
+          document.addEventListener("DOMContentLoaded", function () {
+            var img = document.getElementById("blog-thumbnail-img");
+            var bgDiv = document.getElementById("blog-thumbnail-bg");
+            if (!img || !bgDiv) return;
+
+            function setBgFromEdgeColor() {
+              // 이미지가 로드되지 않았으면 리턴
+              if (!img.complete || img.naturalWidth === 0) return;
+
+              // 캔버스 생성
+              var canvas = document.createElement("canvas");
+              var ctx = canvas.getContext("2d");
+              if (!ctx) return;
+
+              // 캔버스 크기 설정 (작게)
+              canvas.width = 16;
+              canvas.height = 16;
+
+              // 이미지 그리기
+              ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+              // 엣지 픽셀 추출
+              var imgData = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+              var edgeColors = [];
+
+              // Top row
+              for (var x = 0; x < canvas.width; x++) {
+                var i = x * 4;
+                edgeColors.push([imgData[i], imgData[i + 1], imgData[i + 2]]);
+              }
+              // Bottom row
+              for (var x = 0; x < canvas.width; x++) {
+                var i = ((canvas.width * (canvas.height - 1) + x) * 4);
+                edgeColors.push([imgData[i], imgData[i + 1], imgData[i + 2]]);
+              }
+              // Left column
+              for (var y = 1; y < canvas.height - 1; y++) {
+                var i = (y * canvas.width) * 4;
+                edgeColors.push([imgData[i], imgData[i + 1], imgData[i + 2]]);
+              }
+              // Right column
+              for (var y = 1; y < canvas.height - 1; y++) {
+                var i = ((y * canvas.width + (canvas.width - 1)) * 4);
+                edgeColors.push([imgData[i], imgData[i + 1], imgData[i + 2]]);
+              }
+
+              // 평균 색상 계산
+              var r = 0,
+                g = 0,
+                b = 0;
+              edgeColors.forEach(function (rgb) {
+                r += rgb[0];
+                g += rgb[1];
+                b += rgb[2];
+              });
+              r = Math.round(r / edgeColors.length);
+              g = Math.round(g / edgeColors.length);
+              b = Math.round(b / edgeColors.length);
+
+              // 배경 적용
+              bgDiv.style.background = "rgb(" + r + "," + g + "," + b + ")";
+            }
+
+            if (img.complete && img.naturalWidth !== 0) {
+              setBgFromEdgeColor();
+            } else {
+              img.addEventListener("load", setBgFromEdgeColor);
+            }
+          });
+        </script>
+      </div>
+    )}
+    <article>
+      <p class="text-primary text-sm mt-10">Debuggers Tech Blog</p>
+      <h1 class="text-3xl font-bold mb-2 mt-2">{frontmatter.title}</h1>
+      <p class="text-gray-500 mb-8">
+        {new Date(frontmatter.pubDate).toLocaleDateString("ko-KR")} Wrote By {frontmatter.author}
+      </p>
+      <div class="my-10 flex">
+        <div class="flex flex-col gap-5 w-full">
+          <Content 
+            components={mdxComponents}
+          />
+        </div>
+        <div>
+          <p></p>
+        </div>
+      </div>
+    </article>
+    <div class="flex flex-col gap-2">
+      
+      {
+        prev && (
+          <a
+            href={`/notices/${prev.id}`}
+            class="border-border flex gap-3 rounded-md border-1 p-5 hover:underline"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke-width="1.5"
+              stroke="currentColor"
+              class="dark:text-secondary size-6 text-black"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18"
+              />
+            </svg>
+            이전 글: {prev.title}
+          </a>
+        )
+      }
+      {
+        next && (
+          <a
+            href={`/blogs/${next.id}`}
+            class="border-border flex gap-3 rounded-md border-1 p-5 hover:underline"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke-width="1.5"
+              stroke="currentColor"
+              class="dark:text-secondary size-6 text-black"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3"
+              />
+            </svg>
+            다음 글: {next.title}
+          </a>
+        )
+      }
+    </div>
+    <div class="h-24 "></div>
+  </main>
+</Layout>

@@ -1,0 +1,114 @@
+---
+title: 'Router 개요'
+path: 'orbital/router/index'
+product: 'Orbital'
+category: 'Router'
+lastUpdate: 2025-09-05
+order: 20
+---
+
+## Orbital Router
+
+Router는 Orbital에서 LUNE 프로토콜 메시지를 적절한 핸들러로 라우팅하는 역할을 담당합니다. Express.js와 유사한 API를 제공하며, RESTful 설계 패턴, 미들웨어 체인, 경로 매개변수 등을 지원합니다.
+
+## 주요 기능
+
+- **LUNE 프로토콜 지원**: READ, CREATE, UPDATE, REMOVE 메서드
+- **Express 스타일 API**: 친숙한 라우팅 패턴
+- **미들웨어 체인**: 로깅, 인증, CORS 등
+- **경로 매개변수**: 동적 라우트 지원
+- **에러 처리**: 라우트별 에러 핸들링
+- **라우트 그룹화**: 베이스 경로와 네임스페이스
+
+## 빠른 시작
+
+```rust
+use orbital::router::{Router, RouteResponse};
+use serde_json::json;
+use std::sync::Arc;
+
+let mut router = Router::new("My Router");
+
+// CRUD 라우트 정의
+router.read("/users", Arc::new(|_ctx| {
+    Ok(RouteResponse::json(json!({
+        "users": [{"id": 1, "name": "Alice"}]
+    })))
+}));
+
+router.create("/users", Arc::new(|ctx| {
+    let name = ctx.body_field("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown");
+
+    Ok(RouteResponse::created(json!({
+        "user": {"id": 123, "name": name}
+    })))
+}));
+```
+
+## 문서 목차
+
+### 기본 사용법
+
+- [시작하기](/docs/orbital/router/getting-started) - Router 생성과 기본 라우팅
+- [미들웨어](/docs/orbital/router/middleware) - 미들웨어 체인과 커스텀 미들웨어
+
+### 고급 기능
+
+- [에러 처리](/docs/orbital/router/error-handling) - 라우트별 에러 처리
+- [고급 라우팅](/docs/orbital/router/advanced) - 조건부 라우팅과 고급 패턴
+
+## LUNE 프로토콜 메서드
+
+| 메서드   | HTTP 유사 | 설명        |
+| -------- | --------- | ----------- |
+| `READ`   | GET       | 데이터 조회 |
+| `CREATE` | POST      | 데이터 생성 |
+| `UPDATE` | PUT       | 데이터 수정 |
+| `REMOVE` | DELETE    | 데이터 삭제 |
+
+## API 레퍼런스
+
+### Router 메서드
+
+| 메서드                       | 설명                        |
+| ---------------------------- | --------------------------- |
+| `new(name)`                  | 새로운 Router 인스턴스 생성 |
+| `with_base_path(name, path)` | 베이스 경로와 함께 생성     |
+| `read(path, handler)`        | READ 라우트 등록            |
+| `create(path, handler)`      | CREATE 라우트 등록          |
+| `update(path, handler)`      | UPDATE 라우트 등록          |
+| `remove(path, handler)`      | REMOVE 라우트 등록          |
+| `read_json(path, handler)`   | JSON READ 라우트 등록       |
+| `use_logger()`               | 로깅 미들웨어 추가          |
+| `use_cors()`                 | CORS 미들웨어 추가          |
+| `use_error_handler()`        | 에러 핸들링 미들웨어 추가   |
+| `use_middleware(middleware)` | 커스텀 미들웨어 추가        |
+| `statistics()`               | 라우터 통계 조회            |
+
+### RouteContext 메서드
+
+| 메서드             | 설명                   |
+| ------------------ | ---------------------- |
+| `param(name)`      | 경로 매개변수 가져오기 |
+| `body_json()`      | JSON 본문 파싱         |
+| `body_field(name)` | 특정 필드 값 가져오기  |
+| `lune_message()`   | LUNE 메시지 접근       |
+| `connection_id()`  | 연결 ID 반환           |
+
+### RouteResponse 메서드
+
+| 메서드                   | 설명             |
+| ------------------------ | ---------------- |
+| `json(value)`            | JSON 응답 생성   |
+| `text(content)`          | 텍스트 응답 생성 |
+| `created(value)`         | 201 Created 응답 |
+| `error(status, message)` | 에러 응답 생성   |
+| `new()`                  | 빈 응답 생성     |
+
+## 관련 문서
+
+- [Application](/docs/orbital/application) - 애플리케이션 관리
+- [Event System](/docs/orbital/event) - 이벤트 처리
+- [Types](/docs/orbital/types) - 타입 정의와 데이터 구조

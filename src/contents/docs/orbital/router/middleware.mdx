@@ -1,0 +1,146 @@
+---
+title: '미들웨어'
+path: 'orbital/router/middleware'
+product: 'Orbital'
+category: 'Router'
+lastUpdate: 2025-09-05
+order: 22
+---
+
+## 개요
+
+미들웨어는 요청과 응답 사이에서 실행되는 함수로, 로깅, 인증, CORS 처리 등의 공통 기능을 제공합니다. Orbital은 Express.js와 유사한 미들웨어 시스템을 제공합니다.
+
+## 기본 미들웨어
+
+### 로깅 미들웨어
+
+```rust
+use orbital::router::Router;
+
+let mut router = Router::new("Logged Router");
+
+// 로깅 미들웨어 추가
+router.use_logger();
+
+// 이제 모든 요청이 로깅됩니다
+router.read("/api/data", Arc::new(|_ctx| {
+    Ok(RouteResponse::json(serde_json::json!({
+        "data": "This request will be logged"
+    })))
+}));
+```
+
+### CORS 미들웨어
+
+```rust
+use orbital::router::Router;
+
+let mut router = Router::new("CORS Router");
+
+// CORS 미들웨어 추가
+router.use_cors();
+
+// API 라우트들
+router.read("/api/users", Arc::new(|_ctx| {
+    Ok(RouteResponse::json(serde_json::json!({
+        "users": []
+    })))
+}));
+
+router.create("/api/users", Arc::new(|ctx| {
+    Ok(RouteResponse::created(serde_json::json!({
+        "message": "User created"
+    })))
+}));
+```
+
+### 에러 핸들링 미들웨어
+
+```rust
+use orbital::router::Router;
+
+let mut router = Router::new("Error Handling Router");
+
+// 에러 핸들링 미들웨어 추가
+router.use_error_handler();
+
+// 에러가 발생할 수 있는 라우트
+router.read("/api/error", Arc::new(|_ctx| {
+    Err("Something went wrong!".into())
+}));
+```
+
+## 미들웨어 체인
+
+### 여러 미들웨어 조합
+
+```rust
+use orbital::router::Router;
+
+let mut api_router = Router::with_base_path("API Router", "/api");
+
+// 미들웨어 체인 구성
+api_router
+    .use_logger()           // 1. 요청 로깅
+    .use_cors()             // 2. CORS 처리
+    .use_error_handler();   // 3. 에러 핸들링
+
+// API 라우트들
+api_router.read("/users", Arc::new(|_ctx| {
+    Ok(RouteResponse::json(serde_json::json!({
+        "users": ["Alice", "Bob", "Charlie"]
+    })))
+}));
+
+api_router.create("/users", Arc::new(|ctx| {
+    let name = ctx.body_field("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown");
+
+    Ok(RouteResponse::created(serde_json::json!({
+        "user": {
+            "name": name,
+            "id": 123
+        }
+    })))
+}));
+```
+
+## 커스텀 미들웨어
+
+### MiddlewareBuilder 사용
+
+```rust
+use orbital::router::{Router, MiddlewareBuilder};
+
+let mut secure_router = Router::with_base_path("Secure API", "/api/secure");
+
+// 인증 미들웨어
+secure_router.use_middleware(MiddlewareBuilder::auth(|ctx| {
+    // API 키 검증
+    ctx.body_field("api_key")
+        .and_then(|v| v.as_str())
+        .map(|key| key == "secret123")
+        .unwrap_or(false)
+}));
+
+// 보호된 라우트
+secure_router.read("/profile", Arc::new(|_ctx| {
+    Ok(RouteResponse::json(serde_json::json!({
+        "user": {
+            "id": 1,
+            "name": "Admin User",
+            "role": "administrator"
+        }
+    })))
+}));
+```
+
+## 다음 단계
+
+미들웨어에 대해 알아보았다면, 다음 문서들을 확인해보세요:
+
+- [에러 처리](/docs/orbital/router/error-handling) - 라우트별 에러 처리
+- [고급 라우팅](/docs/orbital/router/advanced) - 조건부 라우팅과 고급 패턴
+- [Router 시작하기](/docs/orbital/router/getting-started) - 기본 라우팅

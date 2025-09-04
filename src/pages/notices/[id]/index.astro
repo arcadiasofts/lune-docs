@@ -1,0 +1,128 @@
+---
+import Layout from '../../../layouts/Layout.astro';
+import { type GetStaticPaths, type MDXInstance } from 'astro';
+import { basename, extname } from 'node:path';
+import '@/styles/global.css';
+import { mdxComponents } from '@/components/mdx/mdx-components';
+
+// MDX frontmatter의 타입을 정의합니다.
+interface Frontmatter {
+  title: string;
+  pubDate: string | Date;
+}
+
+// Astro.glob()이 반환하는 MDX 모듈의 타입을 정의합니다.
+type NoticeModule = MDXInstance<Frontmatter>;
+
+export const getStaticPaths = (async () => {
+  const notices: NoticeModule[] = await Astro.glob(
+    '../../../contents/notices/**/*.{md,mdx}'
+  );
+
+  const sorted = notices
+    .map(notice => ({
+      ...notice,
+      id: basename(notice.file, extname(notice.file)),
+      pubDate: new Date(notice.frontmatter.pubDate),
+    }))
+    .sort((a, b) => b.pubDate.getTime() - a.pubDate.getTime());
+
+  return sorted.map((notice, idx) => {
+    const prev = sorted[idx + 1]
+      ? {
+          id: sorted[idx + 1].id,
+          title: sorted[idx + 1].frontmatter.title,
+        }
+      : null;
+    const next = sorted[idx - 1]
+      ? {
+          id: sorted[idx - 1].id,
+          title: sorted[idx - 1].frontmatter.title,
+        }
+      : null;
+
+    return {
+      params: { id: notice.id },
+      props: {
+        notice,
+        prev,
+        next,
+      },
+    };
+  });
+}) satisfies GetStaticPaths;
+
+const { notice, prev, next } = Astro.props;
+const { Content, frontmatter } = notice;
+---
+
+<Layout>
+  <main class="mx-auto max-w-[1200px] px-4 py-10 md:px-20">
+    <div class="md:h-10"></div>
+    <article>
+      <h1 class="mb-2 text-3xl font-bold">{frontmatter.title}</h1>
+      <p class="mb-8 text-gray-500">
+        {new Date(frontmatter.pubDate).toLocaleDateString('ko-KR')}
+      </p>
+      <div class="my-10 flex">
+        <div class="flex w-full flex-col gap-5">
+          <Content components={mdxComponents} />
+        </div>
+        <div>
+          <p></p>
+        </div>
+      </div>
+    </article>
+    <div class="flex flex-col gap-2">
+      {
+        prev && (
+          <a
+            href={`/notices/${prev.id}`}
+            class="border-border flex gap-3 rounded-md border-1 p-5 hover:underline"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke-width="1.5"
+              stroke="currentColor"
+              class="dark:text-secondary size-6 text-black"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18"
+              />
+            </svg>
+            이전 글: {prev.title}
+          </a>
+        )
+      }
+      {
+        next && (
+          <a
+            href={`/notices/${next.id}`}
+            class="border-border flex gap-3 rounded-md border-1 p-5 hover:underline"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke-width="1.5"
+              stroke="currentColor"
+              class="dark:text-secondary size-6 text-black"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3"
+              />
+            </svg>
+            다음 글: {next.title}
+          </a>
+        )
+      }
+    </div>
+    <div class="h-24"></div>
+  </main>
+</Layout>

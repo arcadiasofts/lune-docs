@@ -1,0 +1,37 @@
+---
+import Layout from '@/layouts/Layout.astro';
+import '@/styles/global.css';
+import { BlogsList } from '@/components/blogs/items';
+
+const blogModules = import.meta.glob('../../contents/blog/**/*.{md,mdx}', {
+  eager: true,
+});
+
+// blogs를 날짜 내림차순으로 정렬
+const blogs = Object.entries(blogModules)
+  .map(([filePath, mod]) => {
+    const { frontmatter, Content } = mod as {
+      frontmatter: { title: string; pubDate: string | Date; author: string };
+      Content: any;
+    };
+    const fileNameWithExt = filePath.split('/').pop() ?? '';
+    const fileName = fileNameWithExt.replace(/\.(md|mdx)$/, '');
+    return { frontmatter, Content, fileName };
+  })
+  .sort((a, b) => {
+    const dateA = new Date(a.frontmatter.pubDate).getTime();
+    const dateB = new Date(b.frontmatter.pubDate).getTime();
+    return dateB - dateA;
+  });
+---
+
+<Layout>
+  <main class="mb-24">
+    <h1 class="mt-10 text-center text-5xl font-bold">디버거즈 테크 블로그</h1>
+    <p class="mt-4 mb-10 text-center">
+      디버거즈의 개발 문화와 새로운 기술들 등을 알려드릴게요!
+    </p>
+    <BlogsList blogs={blogs} client:only="react" />
+    <div class="h-10"></div>
+  </main>
+</Layout>

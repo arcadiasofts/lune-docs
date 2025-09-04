@@ -1,0 +1,395 @@
+---
+title: 'Router 시작하기'
+path: 'orbital/router/getting-started'
+product: 'Orbital'
+category: 'Router'
+lastUpdate: 2025-09-05
+order: 21
+---
+
+## 개요
+
+Router는 Orbital에서 LUNE 프로토콜 메시지를 적절한 핸들러로 라우팅하는 역할을 담당합니다. Express.js와 유사한 API를 제공하며, RESTful 설계 패턴, 미들웨어 체인, 경로 매개변수 등을 지원합니다.
+
+## 기본 사용법
+
+### Router 생성
+
+```rust
+use orbital::router::Router;
+
+// 기본 라우터 생성
+let router = Router::new("My Router");
+
+// 베이스 경로와 함께 생성
+let api_router = Router::with_base_path("API Router", "/api");
+```
+
+### 기본 라우트 등록
+
+```rust
+use orbital::router::{Router, RouteResponse, RouteContext};
+use serde_json::json;
+use std::sync::Arc;
+
+let mut router = Router::new("Main Router");
+
+// READ 라우트 (GET과 유사)
+router.read("/", Arc::new(|_ctx: RouteContext| {
+    Ok(RouteResponse::json(json!({
+        "message": "Welcome to Orbital!",
+        "protocol": "LUNE/1"
+    })))
+}));
+
+router.read("/about", Arc::new(|_ctx: RouteContext| {
+    Ok(RouteResponse::text("About page"))
+}));
+
+// CREATE 라우트 (POST와 유사)
+router.create("/users", Arc::new(|ctx: RouteContext| {
+    let name = ctx.body_field("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown");
+
+    Ok(RouteResponse::created(json!({
+        "id": 123,
+        "name": name,
+        "created_at": chrono::Utc::now().to_rfc3339()
+    })))
+}));
+```
+
+## LUNE 프로토콜 메서드
+
+Router는 LUNE 프로토콜의 CRUD 메서드들을 지원합니다:
+
+```rust
+use orbital::router::{Router, RouteResponse};
+use std::sync::Arc;
+
+let mut router = Router::new("CRUD Router");
+
+// READ - 데이터 조회 (HTTP GET과 유사)
+router.read("/users", Arc::new(|_ctx| {
+    Ok(RouteResponse::json(serde_json::json!({
+        "users": [
+            {"id": 1, "name": "Alice"},
+            {"id": 2, "name": "Bob"}
+        ]
+    })))
+}));
+
+// CREATE - 데이터 생성 (HTTP POST와 유사)
+router.create("/users", Arc::new(|ctx| {
+    let name = ctx.body_field("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown");
+
+    Ok(RouteResponse::created(serde_json::json!({
+        "id": 123,
+        "name": name
+    })))
+}));
+
+// UPDATE - 데이터 수정 (HTTP PUT과 유사)
+router.update("/users/:id", Arc::new(|ctx| {
+    let user_id = ctx.param("id").unwrap_or("0".to_string());
+    let name = ctx.body_field("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown");
+
+    Ok(RouteResponse::json(serde_json::json!({
+        "id": user_id.parse::<i32>().unwrap_or(0),
+        "name": name,
+        "updated_at": chrono::Utc::now().to_rfc3339()
+    })))
+}));
+
+// REMOVE - 데이터 삭제 (HTTP DELETE와 유사)
+router.remove("/users/:id", Arc::new(|ctx| {
+    let user_id = ctx.param("id").unwrap_or("0".to_string());
+
+    Ok(RouteResponse::json(serde_json::json!({
+        "message": format!("User {} deleted", user_id),
+        "deleted_at": chrono::Utc::now().to_rfc3339()
+    })))
+}));
+```
+
+### JSON 응답을 위한 편의 메서드
+
+```rust
+// read_json - JSON 응답을 직접 반환
+router.read_json("/simple", |_ctx| {
+    serde_json::json!({
+        "message": "Simple JSON response",
+        "timestamp": chrono::Utc::now().timestamp()
+    })
+});
+
+// 다른 메서드들도 _json 변형이 있습니다
+router.create_json("/simple-create", |ctx| {
+    serde_json::json!({
+        "created": true,
+        "data": ctx.body_json().unwrap_or_default()
+    })
+});
+```
+
+## 경로 매개변수
+
+### 단일 매개변수
+
+```rust
+async fn get_user(ctx: RouteContext) -> Result<RouteResponse, Box<dyn std::error::Error>> {
+    let user_id = ctx.param("id").unwrap_or("0".to_string());
+    Ok(RouteResponse::json(serde_json::json!({
+        "user_id": user_id,
+        "name": "John Doe"
+    })))
+}
+
+router.read("/users/:id", Arc::new(get_user));
+```
+
+### 여러 매개변수
+
+```rust
+router.read("/users/:user_id/posts/:post_id", Arc::new(|ctx| {
+    let user_id = ctx.param("user_id").unwrap_or("0".to_string());
+    let post_id = ctx.param("post_id").unwrap_or("0".to_string());
+
+    Ok(RouteResponse::json(serde_json::json!({
+        "user_id": user_id,
+        "post_id": post_id,
+        "title": "Sample Post"
+    })))
+}));
+```
+
+### 와일드카드 매개변수
+
+```rust
+router.read("/files/*", Arc::new(|ctx| {
+    let path = ctx.param("*").unwrap_or("".to_string());
+    Ok(RouteResponse::text(format!("Caught path: {}", path)))
+}));
+```
+
+## 요청 및 응답 처리
+
+### 요청 데이터 접근
+
+```rust
+router.create("/users", Arc::new(|ctx| {
+    // JSON 본문 전체 파싱
+    let body_json = ctx.body_json()?;
+
+    // 특정 필드 접근
+    let name = ctx.body_field("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown");
+
+    let email = ctx.body_field("email")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    // LUNE 메시지 접근
+    let lune_message = ctx.lune_message();
+    let message_type = lune_message.header().message_type();
+
+    // 연결 ID
+    let connection_id = ctx.connection_id();
+
+    Ok(RouteResponse::created(serde_json::json!({
+        "user": {
+            "name": name,
+            "email": email
+        },
+        "meta": {
+            "message_type": message_type,
+            "connection_id": connection_id
+        }
+    })))
+}));
+```
+
+### 다양한 응답 타입
+
+```rust
+// JSON 응답
+let json_response = RouteResponse::json(serde_json::json!({
+    "message": "Success",
+    "data": {"id": 123}
+}));
+
+// 텍스트 응답
+let text_response = RouteResponse::text("Hello, World!");
+
+// 에러 응답
+let error_response = RouteResponse::error(404, "Not Found");
+
+// 생성 응답 (201 Created)
+let created_response = RouteResponse::created(serde_json::json!({
+    "id": 456,
+    "created_at": chrono::Utc::now().to_rfc3339()
+}));
+
+// 커스텀 응답
+let custom_response = RouteResponse::new()
+    .status(201)
+    .header("Content-Type", "application/json")
+    .header("X-Custom-Header", "custom-value")
+    .body(b"Custom response body".to_vec());
+```
+
+## 라우트 그룹화
+
+### 베이스 경로를 사용한 그룹화
+
+```rust
+use orbital::application::OrbitApplication;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = OrbitApplication::new(None, None, None);
+
+    // API v1 라우터
+    let mut api_v1_router = Router::with_base_path("API v1", "/api/v1");
+    api_v1_router.read("/users", Arc::new(|_ctx| {
+        Ok(RouteResponse::json(serde_json::json!({"version": "1.0"})))
+    }));
+
+    // API v2 라우터
+    let mut api_v2_router = Router::with_base_path("API v2", "/api/v2");
+    api_v2_router.read("/users", Arc::new(|_ctx| {
+        Ok(RouteResponse::json(serde_json::json!({"version": "2.0"})))
+    }));
+
+    // 관리자 라우터
+    let mut admin_router = Router::with_base_path("Admin", "/admin");
+    admin_router.read("/dashboard", Arc::new(|_ctx| {
+        Ok(RouteResponse::json(serde_json::json!({"page": "dashboard"})))
+    }));
+
+    app.register_routers(vec![api_v1_router, api_v2_router, admin_router])?;
+
+    app.listen(8080).await?;
+
+    Ok(())
+}
+```
+
+## 빠른 시작 예제
+
+### RESTful API 서버
+
+```rust
+use orbital::application::OrbitApplication;
+use orbital::router::{Router, RouteResponse};
+use serde_json::json;
+use std::sync::Arc;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = OrbitApplication::new(
+        Some("RESTful Server".to_string()),
+        None,
+        None
+    );
+
+    let mut users_router = Router::with_base_path("Users API", "/api/users");
+
+    // 사용자 목록
+    users_router.read("/", Arc::new(|_ctx| {
+        Ok(RouteResponse::json(json!({
+            "users": [
+                {"id": 1, "name": "Alice", "email": "alice@example.com"},
+                {"id": 2, "name": "Bob", "email": "bob@example.com"},
+                {"id": 3, "name": "Charlie", "email": "charlie@example.com"}
+            ]
+        })))
+    }));
+
+    // 특정 사용자
+    users_router.read("/:id", Arc::new(|ctx| {
+        let user_id = ctx.param("id").unwrap_or("0".to_string());
+
+        Ok(RouteResponse::json(json!({
+            "user": {
+                "id": user_id.parse::<i32>().unwrap_or(0),
+                "name": format!("User {}", user_id),
+                "email": format!("user{}@example.com", user_id)
+            }
+        })))
+    }));
+
+    // 사용자 생성
+    users_router.create("/", Arc::new(|ctx| {
+        let name = ctx.body_field("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown");
+        let email = ctx.body_field("email")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        Ok(RouteResponse::created(json!({
+            "user": {
+                "id": 999,
+                "name": name,
+                "email": email,
+                "created_at": chrono::Utc::now().to_rfc3339()
+            }
+        })))
+    }));
+
+    // 사용자 수정
+    users_router.update("/:id", Arc::new(|ctx| {
+        let user_id = ctx.param("id").unwrap_or("0".to_string());
+        let name = ctx.body_field("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown");
+
+        Ok(RouteResponse::json(json!({
+            "user": {
+                "id": user_id.parse::<i32>().unwrap_or(0),
+                "name": name,
+                "updated_at": chrono::Utc::now().to_rfc3339()
+            }
+        })))
+    }));
+
+    // 사용자 삭제
+    users_router.remove("/:id", Arc::new(|ctx| {
+        let user_id = ctx.param("id").unwrap_or("0".to_string());
+
+        Ok(RouteResponse::json(json!({
+            "message": format!("User {} deleted successfully", user_id),
+            "deleted_at": chrono::Utc::now().to_rfc3339()
+        })))
+    }));
+
+    app.register(users_router)?;
+
+    println!("🚀 RESTful API 서버가 포트 8080에서 시작됩니다...");
+    println!("📡 사용 가능한 엔드포인트:");
+    println!("   READ   /api/users     - 사용자 목록");
+    println!("   READ   /api/users/:id - 특정 사용자");
+    println!("   CREATE /api/users     - 사용자 생성");
+    println!("   UPDATE /api/users/:id - 사용자 수정");
+    println!("   REMOVE /api/users/:id - 사용자 삭제");
+
+    app.listen(8080).await?;
+
+    Ok(())
+}
+```
+
+## 다음 단계
+
+Router의 기본 사용법을 익혔다면, 다음 문서들을 통해 더 고급 기능들을 살펴보세요:
+
+- [미들웨어](/docs/orbital/router/middleware) - 미들웨어 체인과 커스텀 미들웨어
+- [에러 처리](/docs/orbital/router/error-handling) - 라우트별 에러 처리
+- [고급 라우팅](/docs/orbital/router/advanced) - 조건부 라우팅과 고급 패턴

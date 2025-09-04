@@ -1,0 +1,134 @@
+---
+import Layout from '@/layouts/Layout.astro';
+import '@/styles/global.css';
+import { mdxComponents } from '@/components/mdx/mdx-components';
+import DocsLayout from '@/layouts/docsLayout.astro';
+import StatusBadge from '@/components/ui/status-badge';
+import ThemeImage from '@/components/ui/theme-image';
+
+// 정적 사이트 생성을 명시적으로 설정
+export const prerender = true;
+
+// getStaticPaths 함수 추가
+export async function getStaticPaths() {
+  try {
+    console.log('Starting getStaticPaths...');
+    const docModules = import.meta.glob(
+      '../../../contents/docs/**/*.{md,mdx}',
+      {
+        eager: true,
+      }
+    );
+
+    console.log('Available doc modules:', Object.keys(docModules));
+
+    const paths = [];
+
+    for (const path in docModules) {
+      const module = docModules[path] as any;
+      console.log(
+        'Processing module:',
+        path,
+        'frontmatter:',
+        module.frontmatter
+      );
+
+      if (module.frontmatter?.path) {
+        // path에서 .mdx 확장자를 제거하고 슬래시로 분할
+        const cleanPath = module.frontmatter.path.replace(/\.(md|mdx)$/, '');
+        const slugArray = cleanPath.split('/').filter(Boolean);
+        console.log(
+          'Creating path for:',
+          module.frontmatter.path,
+          'slug array:',
+          slugArray
+        );
+
+        // slug 배열이 비어있지 않은 경우에만 추가
+        if (slugArray.length > 0) {
+          paths.push({
+            params: { slug: slugArray.join('/') },
+            props: { modulePath: path },
+          });
+        }
+      } else {
+        console.log('Module has no path:', path);
+      }
+    }
+
+    console.log('Generated paths:', paths);
+    return paths;
+  } catch (error) {
+    console.error('Error in getStaticPaths:', error);
+    return [];
+  }
+}
+
+const { modulePath } = Astro.props;
+const { slug } = Astro.params;
+console.log('Received slug:', slug);
+
+const docModules = import.meta.glob('../../../contents/docs/**/*.{md,mdx}', {
+  eager: true,
+});
+
+const matchedModule = docModules[modulePath];
+
+if (!matchedModule) {
+  throw new Response(null, { status: 404 });
+}
+
+const { Content, frontmatter } = matchedModule as {
+  Content: any;
+  frontmatter: {
+    title: string;
+    path: string;
+    category?: string;
+    product?: string;
+    lastUpdate?: Date;
+    status?: 'verified' | 'develop' | 'testing' | 'deprecated';
+  };
+};
+---
+
+<Layout>
+  <DocsLayout>
+    <main class="mx-auto max-w-[700px] px-2 md:px-5">
+      <div class="md:h-10"></div>
+      <article>
+        <div class="mb-2 flex items-center gap-5">
+          <h1 class="text-4xl font-bold">{frontmatter.title}</h1>
+          {
+            frontmatter.status && (
+              <StatusBadge status={frontmatter.status} client:load />
+            )
+          }
+        </div>
+        <p class="text-gray-500">
+          Last update - {
+            new Date(frontmatter.lastUpdate || new Date()).toLocaleDateString(
+              'ko-KR'
+            )
+          }
+        </p>
+        <div class="flex w-full flex-col gap-5 break-keep">
+          <Content components={mdxComponents} />
+        </div>
+      </article>
+      <div class="bg-secondary my-10 h-0.5 w-full"></div>
+      <div
+        class="border-border bg-secondary/30 flex flex-col items-center gap-2 rounded-lg border p-8 text-center"
+      >
+        <ThemeImage
+          client:only="react"
+          darkSrc="/brand/logo.png"
+          lightSrc="/brand/logo-dark.png"
+          width={200}
+          alt="Debuggers Logo"
+          class="drop-shadow-lg"
+        />
+      </div>
+    </main>
+    <div class="h-24"></div>
+  </DocsLayout>
+</Layout>

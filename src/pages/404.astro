@@ -1,0 +1,17 @@
+---
+import Layout from '@/layouts/Layout.astro';
+import '@/styles/global.css';
+---
+
+<Layout>
+  <main class="flex flex-col items-center py-10">
+    <h1 class="text-center text-3xl font-bold">404: Not Found</h1>
+    <p class="mt-5 text-center text-gray-500">
+      요청하신 경로
+      <code>
+        {typeof Astro.request.url === 'string' ? Astro.request.url : ''}
+      </code>는<br />
+      저희 서버에 존재하지 않는 것 같아요.
+    </p>
+  </main>
+</Layout>

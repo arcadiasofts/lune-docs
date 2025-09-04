@@ -1,0 +1,56 @@
+---
+const blogModules = import.meta.glob('../../contents/blog/**/*.{md,mdx}', {
+  eager: true,
+});
+
+// notices를 날짜 내림차순으로 정렬
+const blogs = Object.entries(blogModules)
+  .map(([filePath, mod]) => {
+    // Astro v3/v4에서 md/mdx 모듈의 구조는 아래와 같음
+    // { frontmatter, file, url, Content, ... }
+    // 타입 안전을 위해 구조 분해
+    const { frontmatter, Content } = mod as {
+      frontmatter: { title: string; pubDate: string | Date; author: string };
+      Content: any;
+    };
+    // 파일 이름만 추출 (확장자 제거)
+    // filePath 예시: '../../contents/notices/2025-06-22.mdx'
+    const fileNameWithExt = filePath.split('/').pop() ?? '';
+    const fileName = fileNameWithExt.replace(/\.(md|mdx)$/, '');
+    return { frontmatter, Content, fileName };
+  })
+  .sort((a, b) => {
+    const dateA = new Date(a.frontmatter.pubDate).getTime();
+    const dateB = new Date(b.frontmatter.pubDate).getTime();
+    return dateB - dateA;
+  });
+---
+
+<a
+  href="/blogs"
+  class="border-border overflow-hidde bg-primary relative my-10 flex h-36 w-full items-center justify-end rounded-md border px-10 text-5xl font-bold uppercase"
+>
+  Blogs
+</a>
+<div class="my-10 grid grid-cols-1 gap-1 md:grid-cols-3">
+  {
+    blogs.slice(0, 3).map(({ frontmatter, fileName }) => (
+      <>
+        <a href={`/blogs/${fileName}`}>
+          <div class="flex flex-col gap-5">
+            <img class="rounded-md" src={`/blog/thumbnails/${fileName}.png`} />
+            <div>
+              <h3 class="text-lg font-bold">{frontmatter.title}</h3>
+              <div class="text-sm text-gray-500">
+                {frontmatter.author} -{' '}
+                {frontmatter.pubDate
+                  ? new Date(frontmatter.pubDate).toLocaleDateString()
+                  : null}
+              </div>
+            </div>
+          </div>
+        </a>
+      </>
+    ))
+  }
+</div>

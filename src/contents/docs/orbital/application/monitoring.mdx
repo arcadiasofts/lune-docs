@@ -1,0 +1,601 @@
+---
+title: '상태 모니터링'
+path: 'orbital/application/monitoring'
+product: 'Orbital'
+category: 'Application'
+lastUpdate: 2025-09-05
+order: 14
+---
+
+## 개요
+
+Orbital 애플리케이션은 실시간 상태 모니터링과 통계 수집 기능을 제공하여 서버의 성능과 상태를 지속적으로 관찰할 수 있습니다.
+
+## 애플리케이션 상태 조회
+
+### 기본 상태 정보
+
+```rust
+use orbital::application::OrbitApplication;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let app = OrbitApplication::new(
+        Some("Monitor Server".to_string()),
+        None,
+        None
+    );
+
+    // 상태 정보 조회
+    let status = app.status().await;
+
+    println!("애플리케이션 정보:");
+    println!("  이름: {}", status.name);
+    println!("  버전: {}", status.version);
+    println!("  실행 중: {}", status.is_running);
+
+    println!("연결 정보:");
+    println!("  활성 연결: {}", status.active_connections);
+    println!("  정상 연결: {}", status.healthy_connections);
+
+    println!("연결 통계:");
+    println!("  {}", status.connection_stats.summary());
+
+    // 요약 정보
+    println!("전체 요약: {}", status.summary());
+
+    // 라우터 통계
+    let router_stats = app.router_statistics();
+    for stat in router_stats {
+        println!("라우터 '{}': {}", stat.name(), stat.summary());
+    }
+
+    Ok(())
+}
+```
+
+### 주기적 상태 모니터링
+
+```rust
+use orbital::application::OrbitApplication;
+use tokio::time::{interval, Duration};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let app = OrbitApplication::new(
+        Some("Monitoring Server".to_string()),
+        None,
+        None
+    );
+
+    // 백그라운드 모니터링 태스크
+    let app_clone = app.clone();
+    tokio::spawn(async move {
+        let mut interval = interval(Duration::from_secs(30));
+
+        loop {
+            interval.tick().await;
+
+            let status = app_clone.status().await;
+
+            println!("🔍 상태 체크 [{}]", chrono::Utc::now().format("%H:%M:%S"));
+            println!("  활성 연결: {}", status.active_connections);
+            println!("  정상 연결: {}", status.healthy_connections);
+
+            // 연결 상태가 좋지 않으면 경고
+            if status.active_connections > 0 {
+                let health_ratio = status.healthy_connections as f64 / status.active_connections as f64;
+                if health_ratio < 0.8 {
+                    println!("⚠️  연결 상태 주의: 정상 연결 비율 {:.1}%", health_ratio * 100.0);
+                }
+            }
+
+            println!();
+        }
+    });
+
+    app.listen(8080).await?;
+
+    Ok(())
+}
+```
+
+## 연결 관리 모니터링
+
+### 연결 통계 추적
+
+```rust
+use orbital::application::OrbitApplication;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let app = OrbitApplication::new(None, None, None);
+    let connection_manager = app.connection_manager();
+
+    // 연결 통계 모니터링
+    tokio::spawn(async move {
+        loop {
+            let stats = connection_manager.statistics().await;
+            println!("📊 연결 통계: {}", stats.summary());
+
+            // 하트비트 상태 확인
+            let heartbeat_statuses = connection_manager.heartbeat_statuses().await;
+            let healthy_count = heartbeat_statuses.iter()
+                .filter(|s| !s.is_timeout)
+                .count();
+
+            println!("💓 정상 연결: {}/{}", healthy_count, heartbeat_statuses.len());
+
+            // 개별 연결 상태 출력 (처음 5개만)
+            for (i, status) in heartbeat_statuses.iter().take(5).enumerate() {
+                let status_icon = if status.is_timeout { "❌" } else { "✅" };
+                println!("  {} 연결 {}: 지연시간 {}ms",
+                    status_icon,
+                    status.connection_id,
+                    status.latency_ms
+                );
+            }
+
+            if heartbeat_statuses.len() > 5 {
+                println!("  ... 및 {} 개 추가 연결", heartbeat_statuses.len() - 5);
+            }
+
+            tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+        }
+    });
+
+    app.listen(8080).await?;
+
+    Ok(())
+}
+```
+
+### 연결 이벤트 모니터링
+
+```rust
+use orbital::application::OrbitApplication;
+use orbital::event::{EventListener, EventCallback};
+use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let app = OrbitApplication::new(
+        Some("Connection Monitor".to_string()),
+        None,
+        None
+    );
+
+    let emitter = app.event_emitter();
+
+    // 연결 통계 저장소
+    let connection_stats = Arc::new(Mutex::new(HashMap::<String, u64>::new()));
+
+    // 연결 이벤트 추적
+    let stats_clone = Arc::clone(&connection_stats);
+    let connection_callback: EventCallback = Arc::new(move |event_data| {
+        let mut stats = stats_clone.lock().unwrap();
+
+        match event_data.name() {
+            "connection:new" => {
+                *stats.entry("new_connections".to_string()).or_insert(0) += 1;
+                println!("🔗 새 연결: {}", event_data.payload().get("connection_id").unwrap_or(&serde_json::Value::Null));
+            },
+            "connection:closed" => {
+                *stats.entry("closed_connections".to_string()).or_insert(0) += 1;
+                println!("🔌 연결 종료: {}", event_data.payload().get("connection_id").unwrap_or(&serde_json::Value::Null));
+            },
+            "connection:heartbeat_timeout" => {
+                *stats.entry("timeout_connections".to_string()).or_insert(0) += 1;
+                println!("💔 하트비트 타임아웃: {}", event_data.payload().get("connection_id").unwrap_or(&serde_json::Value::Null));
+            },
+            _ => {}
+        }
+
+        // 통계 출력 (10개 이벤트마다)
+        let total_events: u64 = stats.values().sum();
+        if total_events % 10 == 0 {
+            println!("📈 연결 통계 업데이트:");
+            for (event_type, count) in stats.iter() {
+                println!("  {}: {} 회", event_type, count);
+            }
+            println!();
+        }
+
+        Ok(())
+    });
+
+    // 연결 관련 모든 이벤트 수신
+    let connection_events = vec![
+        "connection:new",
+        "connection:closed",
+        "connection:heartbeat_timeout"
+    ];
+
+    for event_name in connection_events {
+        let listener = EventListener::new(event_name, Arc::clone(&connection_callback));
+        emitter.add_listener(listener)?;
+    }
+
+    app.listen(8080).await?;
+
+    Ok(())
+}
+```
+
+## 성능 메트릭
+
+### 라우터 성능 모니터링
+
+```rust
+use orbital::application::OrbitApplication;
+use orbital::router::{Router, RouteResponse};
+use orbital::event::{EventListener, EventCallback};
+use serde_json::json;
+use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+use std::time::Instant;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = OrbitApplication::new(
+        Some("Performance Monitor".to_string()),
+        None,
+        None
+    );
+
+    // 성능 메트릭 저장소
+    let performance_metrics = Arc::new(Mutex::new(HashMap::<String, Vec<u128>>::new()));
+
+    // 라우터 성능 추적을 위한 이벤트 리스너
+    let emitter = app.event_emitter();
+    let metrics_clone = Arc::clone(&performance_metrics);
+
+    let route_callback: EventCallback = Arc::new(move |event_data| {
+        if event_data.name() == "route:matched" {
+            if let Some(handler_time) = event_data.payload().get("handler_time_ms") {
+                if let Some(path) = event_data.payload().get("path") {
+                    let mut metrics = metrics_clone.lock().unwrap();
+                    let route_path = path.as_str().unwrap_or("unknown").to_string();
+                    let time_ms = handler_time.as_u64().unwrap_or(0) as u128;
+
+                    metrics.entry(route_path.clone())
+                        .or_insert_with(Vec::new)
+                        .push(time_ms);
+
+                    // 100개 샘플마다 통계 출력
+                    if let Some(times) = metrics.get(&route_path) {
+                        if times.len() % 100 == 0 {
+                            let avg = times.iter().sum::<u128>() / times.len() as u128;
+                            let min = *times.iter().min().unwrap_or(&0);
+                            let max = *times.iter().max().unwrap_or(&0);
+
+                            println!("🎯 라우트 성능 [{}]:", route_path);
+                            println!("  평균: {}ms, 최소: {}ms, 최대: {}ms", avg, min, max);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    });
+
+    let route_listener = EventListener::new("route:matched", route_callback);
+    emitter.add_listener(route_listener)?;
+
+    // 테스트용 라우터 추가
+    let mut test_router = Router::new("Performance Test Router");
+
+    test_router.read("/fast", Arc::new(|_ctx| {
+        // 빠른 응답 시뮬레이션
+        Ok(RouteResponse::json(json!({"message": "Fast response"})))
+    }));
+
+    test_router.read("/slow", Arc::new(|_ctx| {
+        // 느린 응답 시뮬레이션
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        Ok(RouteResponse::json(json!({"message": "Slow response"})))
+    }));
+
+    app.register(test_router)?;
+
+    // 주기적 전체 성능 리포트
+    let metrics_clone2 = Arc::clone(&performance_metrics);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+
+        loop {
+            interval.tick().await;
+
+            let metrics = metrics_clone2.lock().unwrap();
+            if !metrics.is_empty() {
+                println!("📊 성능 리포트 [{}]", chrono::Utc::now().format("%H:%M:%S"));
+
+                for (route, times) in metrics.iter() {
+                    if !times.is_empty() {
+                        let avg = times.iter().sum::<u128>() / times.len() as u128;
+                        let count = times.len();
+                        println!("  {}: 평균 {}ms ({} 요청)", route, avg, count);
+                    }
+                }
+                println!();
+            }
+        }
+    });
+
+    app.listen(8080).await?;
+
+    Ok(())
+}
+```
+
+### 메모리 및 시스템 리소스 모니터링
+
+```rust
+use orbital::application::OrbitApplication;
+use sysinfo::{System, SystemExt, ProcessExt};
+use tokio::time::{interval, Duration};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let app = OrbitApplication::new(
+        Some("Resource Monitor".to_string()),
+        None,
+        None
+    );
+
+    // 시스템 정보 모니터링
+    tokio::spawn(async move {
+        let mut sys = System::new_all();
+        let mut interval = interval(Duration::from_secs(30));
+
+        loop {
+            interval.tick().await;
+            sys.refresh_all();
+
+            // 전체 시스템 메모리
+            let total_memory = sys.total_memory();
+            let used_memory = sys.used_memory();
+            let memory_usage_percent = (used_memory as f64 / total_memory as f64) * 100.0;
+
+            // CPU 사용률
+            let cpu_usage = sys.global_cpu_info().cpu_usage();
+
+            // 현재 프로세스 정보
+            let current_pid = std::process::id();
+            if let Some(process) = sys.process(sysinfo::Pid::from(current_pid as usize)) {
+                let process_memory = process.memory();
+                let process_cpu = process.cpu_usage();
+
+                println!("🖥️  시스템 리소스 [{}]", chrono::Utc::now().format("%H:%M:%S"));
+                println!("  전체 메모리: {:.1}% ({} MB / {} MB)",
+                    memory_usage_percent,
+                    used_memory / 1024 / 1024,
+                    total_memory / 1024 / 1024
+                );
+                println!("  CPU 사용률: {:.1}%", cpu_usage);
+                println!("  프로세스 메모리: {} MB", process_memory / 1024 / 1024);
+                println!("  프로세스 CPU: {:.1}%", process_cpu);
+
+                // 경고 임계값 체크
+                if memory_usage_percent > 80.0 {
+                    println!("⚠️  메모리 사용률 높음: {:.1}%", memory_usage_percent);
+                }
+                if cpu_usage > 80.0 {
+                    println!("⚠️  CPU 사용률 높음: {:.1}%", cpu_usage);
+                }
+                if process_memory / 1024 / 1024 > 500 {
+                    println!("⚠️  프로세스 메모리 사용량 높음: {} MB", process_memory / 1024 / 1024);
+                }
+
+                println!();
+            }
+        }
+    });
+
+    app.listen(8080).await?;
+
+    Ok(())
+}
+```
+
+## 로그 모니터링
+
+### 구조화된 로깅과 모니터링
+
+```rust
+use orbital::application::{OrbitApplication, config::LogLevel};
+use orbital::event::{EventListener, EventCallback};
+use serde_json::json;
+use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let app = OrbitApplication::new(
+        Some("Log Monitor".to_string()),
+        None,
+        None
+    );
+
+    // 로그 통계 저장소
+    let log_stats = Arc::new(Mutex::new(HashMap::<String, u64>::new()));
+
+    // 로그 이벤트 모니터링
+    let emitter = app.event_emitter();
+    let stats_clone = Arc::clone(&log_stats);
+
+    let log_callback: EventCallback = Arc::new(move |event_data| {
+        let mut stats = stats_clone.lock().unwrap();
+
+        // 로그 레벨별 카운트
+        *stats.entry(event_data.name().to_string()).or_insert(0) += 1;
+
+        // 에러 로그는 즉시 출력
+        if event_data.name() == "log:error" {
+            println!("🚨 에러 로그: {}", event_data.payload());
+        }
+
+        // 경고 로그도 출력
+        if event_data.name() == "log:warn" {
+            println!("⚠️  경고 로그: {}", event_data.payload());
+        }
+
+        // 통계 업데이트 (50개 로그마다)
+        let total_logs: u64 = stats.values().sum();
+        if total_logs % 50 == 0 {
+            println!("📝 로그 통계 (총 {} 개):", total_logs);
+            for (log_level, count) in stats.iter() {
+                let percentage = (*count as f64 / total_logs as f64) * 100.0;
+                println!("  {}: {} 개 ({:.1}%)", log_level, count, percentage);
+            }
+            println!();
+        }
+
+        Ok(())
+    });
+
+    // 모든 로그 레벨 이벤트 수신
+    let log_events = vec!["log:trace", "log:debug", "log:info", "log:warn", "log:error"];
+    for event_name in log_events {
+        let listener = EventListener::new(event_name, Arc::clone(&log_callback));
+        emitter.add_listener(listener)?;
+    }
+
+    // 다양한 로그 생성 (테스트용)
+    tokio::spawn({
+        let app_clone = app.clone();
+        async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(10));
+            let mut counter = 0;
+
+            loop {
+                interval.tick().await;
+                counter += 1;
+
+                // 주기적으로 다양한 로그 생성
+                app_clone.log(LogLevel::Info, "주기적 상태 체크", Some(json!({
+                    "check_number": counter,
+                    "timestamp": chrono::Utc::now().to_rfc3339()
+                })));
+
+                // 가끔 경고나 에러 로그 생성
+                if counter % 5 == 0 {
+                    app_clone.log(LogLevel::Warn, "주의사항", Some(json!({
+                        "warning_type": "periodic_warning",
+                        "counter": counter
+                    })));
+                }
+
+                if counter % 20 == 0 {
+                    app_clone.log(LogLevel::Error, "테스트 에러", Some(json!({
+                        "error_type": "test_error",
+                        "counter": counter,
+                        "severity": "low"
+                    })));
+                }
+            }
+        }
+    });
+
+    app.listen(8080).await?;
+
+    Ok(())
+}
+```
+
+## 대시보드 및 리포팅
+
+### 실시간 상태 대시보드
+
+```rust
+use orbital::application::OrbitApplication;
+use serde_json::json;
+
+async fn generate_status_report(app: &OrbitApplication) -> serde_json::Value {
+    let status = app.status().await;
+    let connection_manager = app.connection_manager();
+    let connection_stats = connection_manager.statistics().await;
+    let heartbeat_statuses = connection_manager.heartbeat_statuses().await;
+
+    let healthy_connections = heartbeat_statuses.iter()
+        .filter(|s| !s.is_timeout)
+        .count();
+
+    let average_latency = if !heartbeat_statuses.is_empty() {
+        heartbeat_statuses.iter()
+            .map(|s| s.latency_ms)
+            .sum::<u64>() / heartbeat_statuses.len() as u64
+    } else {
+        0
+    };
+
+    json!({
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "application": {
+            "name": status.name,
+            "version": status.version,
+            "is_running": status.is_running,
+            "uptime_seconds": 0 // 실제로는 시작 시간으로부터 계산
+        },
+        "connections": {
+            "active": status.active_connections,
+            "healthy": healthy_connections,
+            "health_ratio": if status.active_connections > 0 {
+                healthy_connections as f64 / status.active_connections as f64
+            } else {
+                1.0
+            },
+            "average_latency_ms": average_latency
+        },
+        "performance": {
+            "total_requests": connection_stats.messages_processed(),
+            "requests_per_second": 0.0, // 실제로는 시간 윈도우 기반 계산
+            "average_response_time_ms": 0 // 실제로는 응답 시간 추적 필요
+        },
+        "router_statistics": app.router_statistics().iter().map(|stat| json!({
+            "name": stat.name(),
+            "route_count": stat.route_count(),
+            "handled_requests": stat.handled_requests(),
+            "failed_requests": stat.failed_requests(),
+            "average_response_time_ms": stat.average_response_time_ms()
+        })).collect::<Vec<_>>()
+    })
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let app = OrbitApplication::new(
+        Some("Dashboard Server".to_string()),
+        None,
+        None
+    );
+
+    // 상태 리포트 생성 및 출력
+    let app_clone = app.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+
+        loop {
+            interval.tick().await;
+
+            let report = generate_status_report(&app_clone).await;
+            println!("📊 상태 리포트:");
+            println!("{}", serde_json::to_string_pretty(&report).unwrap());
+            println!("{}", "=".repeat(50));
+        }
+    });
+
+    app.listen(8080).await?;
+
+    Ok(())
+}
+```
+
+## 다음 단계
+
+상태 모니터링에 대해 알아보았다면, 다음 문서들을 확인해보세요:
+
+- [생명주기 관리](/docs/orbital/application/lifecycle) - 서버 시작, 중지, 재시작
+- [에러 처리](/docs/orbital/application/error-handling) - 에러 처리와 복구
+- [설정 관리](/docs/orbital/application/configuration) - 애플리케이션 설정

@@ -1,0 +1,582 @@
+---
+title: '에러 처리'
+path: 'orbital/router/error-handling'
+product: 'Orbital'
+category: 'Router'
+lastUpdate: 2025-09-05
+order: 23
+---
+
+## 개요
+
+Orbital Router는 강력한 에러 처리 시스템을 제공하여 안정적인 API를 구축할 수 있습니다. 라우트별 에러 처리부터 글로벌 에러 핸들링까지 다양한 방법을 지원합니다.
+
+## 기본 에러 처리
+
+### Result 타입 사용
+
+```rust
+use orbital::router::{Router, RouteResponse, RouteContext};
+use orbital::router::error::RouterError;
+use std::sync::Arc;
+
+let mut router = Router::new("Error Handling Router");
+
+router.read("/users/:id", Arc::new(|ctx: RouteContext| -> Result<RouteResponse, RouterError> {
+    let user_id = ctx.param("id")
+        .ok_or(RouterError::BadRequest("Missing user ID".to_string()))?;
+
+    let id: u64 = user_id.parse()
+        .map_err(|_| RouterError::BadRequest("Invalid user ID format".to_string()))?;
+
+    if id == 0 {
+        return Err(RouterError::NotFound("User not found".to_string()));
+    }
+
+    Ok(RouteResponse::json(serde_json::json!({
+        "user": {
+            "id": id,
+            "name": format!("User {}", id)
+        }
+    })))
+}));
+```
+
+### 에러 응답 생성
+
+```rust
+use orbital::router::{Router, RouteResponse};
+use serde_json::json;
+
+let mut router = Router::new("Error Response Router");
+
+router.read("/api/error-demo", Arc::new(|ctx| {
+    let error_type = ctx.body_field("error_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("none");
+
+    match error_type {
+        "not_found" => Ok(RouteResponse::error(404, "Resource not found")),
+        "unauthorized" => Ok(RouteResponse::error(401, "Authentication required")),
+        "forbidden" => Ok(RouteResponse::error(403, "Access denied")),
+        "bad_request" => Ok(RouteResponse::error(400, "Invalid request data")),
+        "server_error" => Ok(RouteResponse::error(500, "Internal server error")),
+        _ => Ok(RouteResponse::json(json!({
+            "message": "No error requested",
+            "available_errors": ["not_found", "unauthorized", "forbidden", "bad_request", "server_error"]
+        })))
+    }
+}));
+```
+
+## 커스텀 에러 타입
+
+### 애플리케이션별 에러 정의
+
+```rust
+use serde::{Serialize, Deserialize};
+use std::fmt;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ApiError {
+    ValidationError { field: String, message: String },
+    DatabaseError { message: String },
+    AuthenticationError { message: String },
+    AuthorizationError { resource: String },
+    NotFound { resource: String, id: String },
+    Conflict { message: String },
+    RateLimited { retry_after: u64 },
+}
+
+impl fmt::Display for ApiError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ApiError::ValidationError { field, message } => {
+                write!(f, "Validation error in field '{}': {}", field, message)
+            },
+            ApiError::DatabaseError { message } => {
+                write!(f, "Database error: {}", message)
+            },
+            ApiError::AuthenticationError { message } => {
+                write!(f, "Authentication error: {}", message)
+            },
+            ApiError::AuthorizationError { resource } => {
+                write!(f, "Access denied to resource: {}", resource)
+            },
+            ApiError::NotFound { resource, id } => {
+                write!(f, "{} with ID '{}' not found", resource, id)
+            },
+            ApiError::Conflict { message } => {
+                write!(f, "Conflict: {}", message)
+            },
+            ApiError::RateLimited { retry_after } => {
+                write!(f, "Rate limited. Retry after {} seconds", retry_after)
+            },
+        }
+    }
+}
+
+impl std::error::Error for ApiError {}
+
+impl From<ApiError> for RouteResponse {
+    fn from(error: ApiError) -> Self {
+        let (status, error_code) = match &error {
+            ApiError::ValidationError { .. } => (400, "VALIDATION_ERROR"),
+            ApiError::DatabaseError { .. } => (500, "DATABASE_ERROR"),
+            ApiError::AuthenticationError { .. } => (401, "AUTHENTICATION_ERROR"),
+            ApiError::AuthorizationError { .. } => (403, "AUTHORIZATION_ERROR"),
+            ApiError::NotFound { .. } => (404, "NOT_FOUND"),
+            ApiError::Conflict { .. } => (409, "CONFLICT"),
+            ApiError::RateLimited { .. } => (429, "RATE_LIMITED"),
+        };
+
+        RouteResponse::json(serde_json::json!({
+            "error": {
+                "code": error_code,
+                "message": error.to_string(),
+                "details": error,
+                "timestamp": chrono::Utc::now().to_rfc3339()
+            }
+        })).status(status)
+    }
+}
+```
+
+### 커스텀 에러 사용
+
+```rust
+use orbital::router::{Router, RouteResponse};
+
+let mut router = Router::new("Custom Error Router");
+
+router.read("/users/:id", Arc::new(|ctx| -> Result<RouteResponse, ApiError> {
+    let user_id = ctx.param("id")
+        .ok_or(ApiError::ValidationError {
+            field: "id".to_string(),
+            message: "User ID is required".to_string(),
+        })?;
+
+    let id: u64 = user_id.parse()
+        .map_err(|_| ApiError::ValidationError {
+            field: "id".to_string(),
+            message: "User ID must be a valid number".to_string(),
+        })?;
+
+    // 데이터베이스 조회 시뮬레이션
+    if id == 999 {
+        return Err(ApiError::DatabaseError {
+            message: "Database connection failed".to_string(),
+        });
+    }
+
+    if id == 0 {
+        return Err(ApiError::NotFound {
+            resource: "User".to_string(),
+            id: user_id,
+        });
+    }
+
+    Ok(RouteResponse::json(serde_json::json!({
+        "user": {
+            "id": id,
+            "name": format!("User {}", id),
+            "email": format!("user{}@example.com", id)
+        }
+    })))
+}));
+
+router.create("/users", Arc::new(|ctx| -> Result<RouteResponse, ApiError> {
+    let name = ctx.body_field("name")
+        .and_then(|v| v.as_str())
+        .ok_or(ApiError::ValidationError {
+            field: "name".to_string(),
+            message: "Name is required".to_string(),
+        })?;
+
+    if name.len() < 2 {
+        return Err(ApiError::ValidationError {
+            field: "name".to_string(),
+            message: "Name must be at least 2 characters".to_string(),
+        });
+    }
+
+    let email = ctx.body_field("email")
+        .and_then(|v| v.as_str())
+        .ok_or(ApiError::ValidationError {
+            field: "email".to_string(),
+            message: "Email is required".to_string(),
+        })?;
+
+    if !email.contains('@') {
+        return Err(ApiError::ValidationError {
+            field: "email".to_string(),
+            message: "Invalid email format".to_string(),
+        });
+    }
+
+    // 중복 체크 시뮬레이션
+    if email == "admin@example.com" {
+        return Err(ApiError::Conflict {
+            message: "User with this email already exists".to_string(),
+        });
+    }
+
+    Ok(RouteResponse::created(serde_json::json!({
+        "user": {
+            "id": 123,
+            "name": name,
+            "email": email,
+            "created_at": chrono::Utc::now().to_rfc3339()
+        }
+    })))
+}));
+```
+
+## 글로벌 에러 핸들링
+
+### 에러 핸들링 미들웨어
+
+```rust
+use orbital::router::{Router, Middleware, RouteResponse};
+use orbital::r#struct::LUNE;
+use std::sync::Arc;
+
+struct GlobalErrorHandler;
+
+#[async_trait::async_trait]
+impl Middleware for GlobalErrorHandler {
+    async fn handle(
+        &self,
+        req: LUNE,
+        next: Next,
+    ) -> Result<RouteResponse, Box<dyn std::error::Error>> {
+        match next.run(req).await {
+            Ok(response) => Ok(response),
+            Err(error) => {
+                // 에러 로깅
+                eprintln!("🚨 Route error: {}", error);
+
+                // 에러 타입별 처리
+                if let Some(api_error) = error.downcast_ref::<ApiError>() {
+                    Ok(api_error.clone().into())
+                } else if let Some(router_error) = error.downcast_ref::<RouterError>() {
+                    Ok(handle_router_error(router_error))
+                } else {
+                    // 알 수 없는 에러
+                    Ok(RouteResponse::json(serde_json::json!({
+                        "error": {
+                            "code": "INTERNAL_ERROR",
+                            "message": "An unexpected error occurred",
+                            "timestamp": chrono::Utc::now().to_rfc3339()
+                        }
+                    })).status(500))
+                }
+            }
+        }
+    }
+}
+
+fn handle_router_error(error: &RouterError) -> RouteResponse {
+    match error {
+        RouterError::RouteNotFound(path) => {
+            RouteResponse::json(serde_json::json!({
+                "error": {
+                    "code": "ROUTE_NOT_FOUND",
+                    "message": format!("No route found for path: {}", path),
+                    "timestamp": chrono::Utc::now().to_rfc3339()
+                }
+            })).status(404)
+        },
+        RouterError::BadRequest(message) => {
+            RouteResponse::json(serde_json::json!({
+                "error": {
+                    "code": "BAD_REQUEST",
+                    "message": message,
+                    "timestamp": chrono::Utc::now().to_rfc3339()
+                }
+            })).status(400)
+        },
+        RouterError::InternalError(message) => {
+            RouteResponse::json(serde_json::json!({
+                "error": {
+                    "code": "INTERNAL_ERROR",
+                    "message": message,
+                    "timestamp": chrono::Utc::now().to_rfc3339()
+                }
+            })).status(500)
+        },
+        _ => {
+            RouteResponse::json(serde_json::json!({
+                "error": {
+                    "code": "UNKNOWN_ERROR",
+                    "message": "An unknown error occurred",
+                    "timestamp": chrono::Utc::now().to_rfc3339()
+                }
+            })).status(500)
+        }
+    }
+}
+
+// 사용법
+let mut router = Router::new("Global Error Handler Router");
+router.use_middleware(GlobalErrorHandler);
+```
+
+## 에러 복구 및 재시도
+
+### 자동 재시도 미들웨어
+
+```rust
+use orbital::router::{Router, Middleware};
+use std::sync::Arc;
+use tokio::time::{sleep, Duration};
+
+struct RetryMiddleware {
+    max_retries: usize,
+    retry_delay: Duration,
+}
+
+impl RetryMiddleware {
+    fn new(max_retries: usize, retry_delay_ms: u64) -> Self {
+        Self {
+            max_retries,
+            retry_delay: Duration::from_millis(retry_delay_ms),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Middleware for RetryMiddleware {
+    async fn handle(
+        &self,
+        req: LUNE,
+        next: Next,
+    ) -> Result<RouteResponse, Box<dyn std::error::Error>> {
+        let mut last_error = None;
+
+        for attempt in 0..=self.max_retries {
+            match next.run(req.clone()).await {
+                Ok(response) => {
+                    if attempt > 0 {
+                        println!("✅ Request succeeded after {} retries", attempt);
+                    }
+                    return Ok(response);
+                },
+                Err(error) => {
+                    // 재시도 가능한 에러인지 확인
+                    if is_retryable_error(&error) && attempt < self.max_retries {
+                        println!("🔄 Retrying request (attempt {}/{})", attempt + 1, self.max_retries);
+                        sleep(self.retry_delay).await;
+                        last_error = Some(error);
+                    } else {
+                        return Err(error);
+                    }
+                }
+            }
+        }
+
+        // 모든 재시도 실패
+        Err(last_error.unwrap_or_else(|| "Max retries exceeded".into()))
+    }
+}
+
+fn is_retryable_error(error: &Box<dyn std::error::Error>) -> bool {
+    if let Some(api_error) = error.downcast_ref::<ApiError>() {
+        matches!(api_error, ApiError::DatabaseError { .. })
+    } else {
+        false
+    }
+}
+
+// 사용법
+let mut router = Router::new("Retry Router");
+router.use_middleware(RetryMiddleware::new(3, 1000)); // 최대 3회 재시도, 1초 간격
+```
+
+## 에러 모니터링
+
+### 에러 통계 수집
+
+```rust
+use orbital::router::{Router, Middleware};
+use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+
+struct ErrorMonitoringMiddleware {
+    error_counts: Arc<Mutex<HashMap<String, u64>>>,
+}
+
+impl ErrorMonitoringMiddleware {
+    fn new() -> Self {
+        Self {
+            error_counts: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    fn get_error_stats(&self) -> HashMap<String, u64> {
+        self.error_counts.lock().unwrap().clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl Middleware for ErrorMonitoringMiddleware {
+    async fn handle(
+        &self,
+        req: LUNE,
+        next: Next,
+    ) -> Result<RouteResponse, Box<dyn std::error::Error>> {
+        match next.run(req).await {
+            Ok(response) => Ok(response),
+            Err(error) => {
+                // 에러 통계 업데이트
+                let error_type = if let Some(api_error) = error.downcast_ref::<ApiError>() {
+                    match api_error {
+                        ApiError::ValidationError { .. } => "validation_error",
+                        ApiError::DatabaseError { .. } => "database_error",
+                        ApiError::AuthenticationError { .. } => "auth_error",
+                        ApiError::AuthorizationError { .. } => "authz_error",
+                        ApiError::NotFound { .. } => "not_found",
+                        ApiError::Conflict { .. } => "conflict",
+                        ApiError::RateLimited { .. } => "rate_limited",
+                    }
+                } else {
+                    "unknown_error"
+                };
+
+                {
+                    let mut counts = self.error_counts.lock().unwrap();
+                    *counts.entry(error_type.to_string()).or_insert(0) += 1;
+                }
+
+                // 에러 로깅
+                println!("📊 Error occurred: {} (total: {})",
+                    error_type,
+                    self.error_counts.lock().unwrap().get(error_type).unwrap_or(&0)
+                );
+
+                Err(error)
+            }
+        }
+    }
+}
+
+// 에러 통계 조회 라우트
+let error_monitor = Arc::new(ErrorMonitoringMiddleware::new());
+let mut router = Router::new("Monitored Router");
+
+router.use_middleware(Arc::clone(&error_monitor));
+
+// 에러 통계 조회 엔드포인트
+let monitor_clone = Arc::clone(&error_monitor);
+router.read("/admin/error-stats", Arc::new(move |_ctx| {
+    let stats = monitor_clone.get_error_stats();
+    Ok(RouteResponse::json(serde_json::json!({
+        "error_statistics": stats,
+        "timestamp": chrono::Utc::now().to_rfc3339()
+    })))
+}));
+```
+
+## 에러 응답 형식 표준화
+
+### 표준 에러 응답 구조
+
+```rust
+use serde::{Serialize, Deserialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StandardErrorResponse {
+    pub error: ErrorDetails,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorDetails {
+    pub code: String,
+    pub message: String,
+    pub details: Option<serde_json::Value>,
+    pub timestamp: String,
+    pub request_id: Option<String>,
+    pub help_url: Option<String>,
+}
+
+impl StandardErrorResponse {
+    pub fn new(code: &str, message: &str) -> Self {
+        Self {
+            error: ErrorDetails {
+                code: code.to_string(),
+                message: message.to_string(),
+                details: None,
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                request_id: None,
+                help_url: None,
+            }
+        }
+    }
+
+    pub fn with_details(mut self, details: serde_json::Value) -> Self {
+        self.error.details = Some(details);
+        self
+    }
+
+    pub fn with_request_id(mut self, request_id: String) -> Self {
+        self.error.request_id = Some(request_id);
+        self
+    }
+
+    pub fn with_help_url(mut self, help_url: String) -> Self {
+        self.error.help_url = Some(help_url);
+        self
+    }
+
+    pub fn to_response(self, status: u16) -> RouteResponse {
+        RouteResponse::json(serde_json::to_value(self).unwrap()).status(status)
+    }
+}
+
+// 사용 예시
+router.read("/api/validation-demo", Arc::new(|ctx| {
+    let age = ctx.body_field("age")
+        .and_then(|v| v.as_i64())
+        .ok_or_else(|| {
+            StandardErrorResponse::new(
+                "VALIDATION_ERROR",
+                "Age is required and must be a number"
+            )
+            .with_details(serde_json::json!({
+                "field": "age",
+                "expected_type": "integer",
+                "min_value": 0,
+                "max_value": 150
+            }))
+            .with_help_url("https://docs.example.com/api/users#age-validation")
+            .to_response(400)
+        })?;
+
+    if age < 0 || age > 150 {
+        return Ok(StandardErrorResponse::new(
+            "VALIDATION_ERROR",
+            "Age must be between 0 and 150"
+        )
+        .with_details(serde_json::json!({
+            "field": "age",
+            "provided_value": age,
+            "min_value": 0,
+            "max_value": 150
+        }))
+        .to_response(400));
+    }
+
+    Ok(RouteResponse::json(serde_json::json!({
+        "message": "Valid age provided",
+        "age": age
+    })))
+}));
+```
+
+## 다음 단계
+
+에러 처리에 대해 알아보았다면, 다음 문서들을 확인해보세요:
+
+- [고급 라우팅](/docs/orbital/router/advanced) - 조건부 라우팅과 고급 패턴
+- [미들웨어](/docs/orbital/router/middleware) - 미들웨어 체인과 커스텀 미들웨어
+- [Router 시작하기](/docs/orbital/router/getting-started) - 기본 라우팅

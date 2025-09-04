@@ -1,0 +1,152 @@
+---
+import { RetroGrid } from '@/components/magicui/retro-grid';
+import WithUsItem from '@/components/home/with-us-item';
+import Notices from '../components/home/notices.astro';
+import Blogs from '../components/home/blogs.astro';
+import Layout from '../layouts/Layout.astro';
+
+import '@/styles/global.css';
+---
+
+<Layout>
+  <main>
+    <section
+      class="relative z-0 h-fit max-h-[800px] w-screen py-32 text-white md:py-44"
+      style="background-color: oklch(0.145 0 0);"
+    >
+      <div
+        class="set-0 relative z-50 mx-auto flex max-w-[1200px] flex-col justify-center gap-5 pl-5 md:pl-20"
+      >
+        <h1 class="text-5xl font-bold md:text-7xl">
+          FASTER.
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke-width="1.5"
+            class="mb-1 inline size-10 md:mb-2 md:size-14"
+          >
+            <defs>
+              <linearGradient
+                id="orange-gradient"
+                x1="0"
+                y1="0"
+                x2="24"
+                y2="24"
+                gradientUnits="userSpaceOnUse"
+              >
+                <stop stop-color="#278bf5"></stop>
+                <stop offset="0.5" stop-color="#1959e3"></stop>
+                <stop offset="1" stop-color="#2d19e3"></stop>
+              </linearGradient>
+            </defs>
+            <path
+              stroke="url(#orange-gradient)"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="1.5"
+              d="M11.42 15.17 17.25 21A2.652 2.652 0 0 0 21 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 1 1-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 0 0 4.486-6.336l-3.276 3.277a3.004 3.004 0 0 1-2.25-2.25l3.276-3.276a4.5 4.5 0 0 0-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085m-1.745 1.437L5.909 7.5H4.5L2.25 3.75l1.5-1.5L7.5 4.5v1.409l4.26 4.26m-1.745 1.437 1.745-1.437m6.615 8.206L15.75 15.75M4.867 19.125h.008v.008h-.008v-.008Z"
+            ></path>
+          </svg>
+          <br />LIGHTER.
+          <br />EASIER.
+        </h1>
+        <a
+          href="/docs"
+          class="border-border w-fit overflow-hidden rounded-md border shadow-lg transition-transform hover:translate-x-4 hover:scale-110"
+        >
+          <p class="md:text-1xl h-fit w-fit bg-gray-800 p-1 px-3 text-lg">
+            <span class="text-[#a6e22e]">$</span>
+            <span class="text-white">cargo</span>
+            <span class="text-[#ee8355]"> add</span>
+            <span class="text-white"> orbital</span>
+            <span class="text-[#ee8355]"> --git</span>
+            <span class="text-[#86ea5b]">
+              https://github.com/arcadiasofts/orbital.git</span
+            >
+          </p>
+        </a>
+      </div>
+      <RetroGrid className="absolute top-0" client:only="react" />
+    </section>
+    <section class="relative top-[-50px]">
+      <div
+        class="bg-background h-[50px]"
+        style="clip-path: polygon(0 0, 100% 100%, 100% 100%, 0% 100%);"
+      >
+      </div>
+      <div class="mx-auto max-w-[1200px] px-5 md:px-20">
+        <h2 class="mt-10 text-3xl font-bold">LUNE을 사용해 보세요</h2>
+        <div class="mt-10 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <WithUsItem
+            title="LUNE"
+            description="LUNE은 경량화 패킷을 사용하는 강력한 프로토콜입니다. 꼭 필요한 정보만을 전달하며, 게이밍 서비스에 최적화된 빠른 응답 속도를 제공합니다."
+            docs="docs/debuggers-auth/authorization/login"
+            client:only="react"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke-width="1.5"
+              stroke="currentColor"
+              class="size-6"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 0 0 2.25-2.25V6.75a2.25 2.25 0 0 0-2.25-2.25H6.75A2.25 2.25 0 0 0 4.5 6.75v10.5a2.25 2.25 0 0 0 2.25 2.25Zm.75-12h9v9h-9v-9Z"
+              ></path>
+            </svg>
+          </WithUsItem>
+          <WithUsItem
+            title="Orbital"
+            description="Orbital은 Rust를 통해 LUNE 서버를 제작하기 위한 가장 강력한 라이브러리입니다. 쉽게 빠르지만 강력한 성능을 자랑하는 서버를 구현낼 수 있도록 돕습니다."
+            docs="/docs/orbital/getting-started"
+            client:only="react"
+            ><svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke-width="1.5"
+              stroke="currentColor"
+              class="size-6"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M5.25 14.25h13.5m-13.5 0a3 3 0 0 1-3-3m3 3a3 3 0 1 0 0 6h13.5a3 3 0 1 0 0-6m-16.5-3a3 3 0 0 1 3-3h13.5a3 3 0 0 1 3 3m-19.5 0a4.5 4.5 0 0 1 .9-2.7L5.737 5.1a3.375 3.375 0 0 1 2.7-1.35h7.126c1.062 0 2.062.5 2.7 1.35l2.587 3.45a4.5 4.5 0 0 1 .9 2.7m0 0a3 3 0 0 1-3 3m0 3h.008v.008h-.008v-.008Zm0-6h.008v.008h-.008v-.008Zm-3 6h.008v.008h-.008v-.008Zm0-6h.008v.008h-.008v-.008Z"
+              ></path>
+            </svg>
+          </WithUsItem>
+          <WithUsItem
+            title="Client"
+            description="디버거즈의 학생회가 어떤 질문을 받았는지, 특정 질문에 대한 답변은 어떤지, 어떤 새로운 글이 올라왔는지 등 디버거에 대한 다양한 정보를 외부 서비스에 제공합니다."
+            docs=""
+            client:only="react"
+            ><svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke-width="1.5"
+              stroke="currentColor"
+              class="size-6"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M9 17.25v1.007a3 3 0 0 1-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0 1 15 18.257V17.25m6-12V15a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 15V5.25m18 0A2.25 2.25 0 0 0 18.75 3H5.25A2.25 2.25 0 0 0 3 5.25m18 0V12a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 12V5.25"
+              ></path>
+            </svg>
+          </WithUsItem>
+        </div>
+      </div>
+    </section>
+    <section class="mx-auto max-w-[1200px] px-5 md:px-20">
+      <Notices />
+    </section>
+    <section class="mx-auto max-w-[1200px] px-5 md:px-20">
+      <Blogs />
+    </section>
+  </main>
+</Layout>

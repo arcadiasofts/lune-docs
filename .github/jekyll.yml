@@ -1,0 +1,10 @@
+# Jekyll 설정 - Astro 파일들 무시
+exclude:
+  - src/
+  - astro.config.mjs
+  - package.json
+  - package-lock.json
+  - pnpm-lock.yaml
+  - tsconfig.json
+  - tailwind.config.js
+  - components.json
