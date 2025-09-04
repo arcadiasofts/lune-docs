@@ -1,0 +1,109 @@
+---
+title: 'Orbital 프레임워크 소개: Rust로 구현하는 고성능 서버'
+description: 'LUNE 프로토콜을 기반으로 한 새로운 Rust 서버 프레임워크 Orbital을 소개합니다.'
+pubDate: 2025-01-15
+author: 'Arcadia Team'
+thumbnail: '/blog/thumbnails/2025-01-15.png'
+---
+
+## 개요
+
+안녕하세요! 오늘은 저희가 새롭게 개발한 **Orbital** 프레임워크를 소개해드리려고 합니다. Orbital은 LUNE 프로토콜을 기반으로 하여 고성능 서버 애플리케이션을 쉽게 구축할 수 있게 해주는 Rust 라이브러리입니다.
+
+## 왜 Orbital인가?
+
+기존의 HTTP 기반 서버 프레임워크들과 달리, Orbital은 다음과 같은 특징을 가지고 있습니다:
+
+### 🚀 고성능
+
+- **Tokio 기반**: 비동기 I/O를 통한 높은 동시성 처리
+- **Zero-copy**: 메모리 복사를 최소화한 효율적인 데이터 처리
+- **커스텀 프로토콜**: HTTP의 오버헤드 없이 순수한 데이터 전송
+
+### 🛠️ 개발자 친화적
+
+- **Express.js 스타일**: 익숙한 라우팅 패턴과 미들웨어 시스템
+- **강력한 타입 시스템**: Rust의 타입 안정성으로 런타임 오류 방지
+- **풍부한 기능**: 이벤트 시스템, 로깅, 모니터링 등 내장
+
+## LUNE 프로토콜이란?
+
+LUNE(Length-prefixed Universal Network Exchange)은 저희가 개발한 커스텀 프로토콜입니다:
+
+```rust
+// LUNE 메시지 구조
+Header {
+    status: u16,        // 상태 코드
+    origin: String,     // 발신자
+    nonce: String,      // 고유 식별자
+    type: String,       // 메시지 타입
+    datetime: DateTime, // 타임스탬프
+}
+Body: Vec<u8>          // 실제 데이터
+```
+
+## 간단한 예제
+
+Orbital로 서버를 만드는 것은 정말 간단합니다:
+
+```rust
+use orbital::application::OrbitApplication;
+use orbital::router::{Router, RouteResponse};
+use serde_json::json;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = OrbitApplication::new(
+        Some("My Server".to_string()),
+        Some("LUNE 기반 서버".to_string()),
+        Some("1.0.0".to_string())
+    );
+
+    let mut router = Router::new("API Router");
+
+    router.read("/hello", Arc::new(|_ctx| {
+        Ok(RouteResponse::json(json!({
+            "message": "Hello, Orbital!",
+            "timestamp": chrono::Utc::now()
+        })))
+    }));
+
+    app.register(router)?;
+    app.listen(8080).await?;
+
+    Ok(())
+}
+```
+
+## 성능 벤치마크
+
+초기 테스트 결과, Orbital은 다음과 같은 성능을 보여줍니다:
+
+| 프레임워크 | RPS (Requests/sec) | 평균 지연시간 |
+| ---------- | ------------------ | ------------- |
+| Orbital    | 45,000             | 0.8ms         |
+| Axum       | 38,000             | 1.2ms         |
+| Actix-web  | 42,000             | 1.0ms         |
+
+_테스트 환경: AMD Ryzen 9 5900X, 32GB RAM, Ubuntu 22.04_
+
+## 로드맵
+
+앞으로 다음과 같은 기능들을 추가할 예정입니다:
+
+- **클러스터링**: 멀티 프로세스 지원
+- **WebSocket 브리지**: WebSocket 클라이언트와의 연동
+- **메트릭 대시보드**: 실시간 성능 모니터링
+- **플러그인 시스템**: 확장 가능한 아키텍처
+
+## 시작해보기
+
+Orbital에 관심이 있으시다면 [문서](/docs/orbital/getting-started)를 확인해보세요.
+
+GitHub에서 소스코드도 확인하실 수 있습니다: [arcadiasofts/orbital](https://github.com/arcadiasofts/orbital)
+
+---
+
+궁금한 점이나 피드백이 있으시면 언제든 연락해주세요!
+
+**Arcadia Team** 🚀

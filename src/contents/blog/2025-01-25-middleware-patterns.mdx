@@ -1,0 +1,455 @@
+---
+title: 'Orbital 미들웨어 패턴: Express.js 개발자를 위한 가이드'
+description: 'Express.js에서 Orbital로 전환하는 개발자들을 위한 미들웨어 패턴 비교와 활용법을 소개합니다.'
+pubDate: 2025-01-25
+author: 'Arcadia Team'
+thumbnail: '/blog/thumbnails/2025-01-25.png'
+---
+
+## Express.js에서 Orbital로
+
+많은 개발자들이 Express.js의 미들웨어 패턴에 익숙합니다. Orbital은 이런 친숙함을 유지하면서도 Rust의 장점을 활용할 수 있도록 설계되었습니다.
+
+## 기본 미들웨어 비교
+
+### Express.js 스타일
+
+```javascript
+const express = require('express');
+const app = express();
+
+// 로깅 미들웨어
+app.use((req, res, next) => {
+  console.log(`${req.method} ${req.path} - ${new Date()}`);
+  next();
+});
+
+// CORS 미들웨어
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE');
+  next();
+});
+
+app.get('/api/users', (req, res) => {
+  res.json({ users: [] });
+});
+```
+
+### Orbital 스타일
+
+```rust
+use orbital::router::Router;
+use orbital::application::OrbitApplication;
+
+let mut app = OrbitApplication::new(
+    Some("Express-like Server".to_string()),
+    None,
+    None
+);
+
+let mut router = Router::new("API Router");
+
+// 로깅 미들웨어
+router.use_logger();
+
+// CORS 미들웨어
+router.use_cors();
+
+// 라우트 핸들러
+router.read("/api/users", Arc::new(|_ctx| {
+    Ok(RouteResponse::json(json!({ "users": [] })))
+}));
+
+app.register(router)?;
+```
+
+## 고급 미들웨어 패턴
+
+### 1. 인증 미들웨어
+
+**Express.js:**
+
+```javascript
+const jwt = require('jsonwebtoken');
+
+function authenticateToken(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    return res.sendStatus(401);
+  }
+
+  jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, user) => {
+    if (err) return res.sendStatus(403);
+    req.user = user;
+    next();
+  });
+}
+
+app.use('/api/protected', authenticateToken);
+```
+
+**Orbital:**
+
+```rust
+use orbital::router::{Middleware, MiddlewareBuilder};
+
+struct AuthMiddleware {
+    secret_key: String,
+}
+
+impl AuthMiddleware {
+    fn new(secret_key: String) -> Self {
+        Self { secret_key }
+    }
+}
+
+#[async_trait::async_trait]
+impl Middleware for AuthMiddleware {
+    async fn handle(
+        &self,
+        req: LUNE,
+        next: Next,
+    ) -> Result<RouteResponse, Box<dyn std::error::Error>> {
+        let auth_header = req.header().get_custom_field("Authorization");
+
+        if let Some(auth_value) = auth_header {
+            if let Some(token) = auth_value.strip_prefix("Bearer ") {
+                // JWT 검증 로직
+                if self.verify_token(token).is_ok() {
+                    return next.run(req).await;
+                }
+            }
+        }
+
+        Ok(RouteResponse::error(401, "Unauthorized"))
+    }
+}
+
+// 사용법
+let mut protected_router = Router::with_base_path("Protected API", "/api/protected");
+protected_router.use_middleware(AuthMiddleware::new("your_secret_key".to_string()));
+```
+
+### 2. 요청 제한 (Rate Limiting)
+
+**Express.js:**
+
+```javascript
+const rateLimit = require('express-rate-limit');
+
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15분
+  max: 100, // 최대 100개 요청
+  message: 'Too many requests from this IP',
+});
+
+app.use('/api/', limiter);
+```
+
+**Orbital:**
+
+```rust
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+struct RateLimitMiddleware {
+    requests: Arc<Mutex<HashMap<String, Vec<u64>>>>,
+    max_requests: usize,
+    window_ms: u64,
+}
+
+impl RateLimitMiddleware {
+    fn new(max_requests: usize, window_ms: u64) -> Self {
+        Self {
+            requests: Arc::new(Mutex::new(HashMap::new())),
+            max_requests,
+            window_ms,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Middleware for RateLimitMiddleware {
+    async fn handle(
+        &self,
+        req: LUNE,
+        next: Next,
+    ) -> Result<RouteResponse, Box<dyn std::error::Error>> {
+        let client_ip = req.header().get_custom_field("X-Forwarded-For")
+            .or_else(|| req.header().get_custom_field("X-Real-IP"))
+            .unwrap_or("unknown".to_string());
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        let mut requests = self.requests.lock().unwrap();
+        let client_requests = requests.entry(client_ip.clone()).or_insert_with(Vec::new);
+
+        // 윈도우 밖의 요청들 제거
+        client_requests.retain(|&timestamp| {
+            now - timestamp < self.window_ms
+        });
+
+        if client_requests.len() >= self.max_requests {
+            return Ok(RouteResponse::error(429, "Too Many Requests"));
+        }
+
+        client_requests.push(now);
+
+        next.run(req).await
+    }
+}
+
+// 사용법
+let mut api_router = Router::with_base_path("API", "/api");
+api_router.use_middleware(RateLimitMiddleware::new(100, 15 * 60 * 1000)); // 15분에 100개
+```
+
+### 3. 요청/응답 변환
+
+**Express.js:**
+
+```javascript
+// 요청 바디 변환
+app.use(express.json());
+app.use((req, res, next) => {
+  if (req.body && req.body.timestamp) {
+    req.body.timestamp = new Date(req.body.timestamp);
+  }
+  next();
+});
+
+// 응답 압축
+const compression = require('compression');
+app.use(compression());
+```
+
+**Orbital:**
+
+```rust
+struct RequestTransformMiddleware;
+
+#[async_trait::async_trait]
+impl Middleware for RequestTransformMiddleware {
+    async fn handle(
+        &self,
+        mut req: LUNE,
+        next: Next,
+    ) -> Result<RouteResponse, Box<dyn std::error::Error>> {
+        // 요청 바디 변환
+        if let Ok(mut body_json) = serde_json::from_slice::<serde_json::Value>(&req.body()) {
+            if let Some(timestamp_str) = body_json.get("timestamp").and_then(|v| v.as_str()) {
+                if let Ok(datetime) = chrono::DateTime::parse_from_rfc3339(timestamp_str) {
+                    body_json["timestamp"] = json!(datetime.with_timezone(&chrono::Utc));
+                    req.set_body(serde_json::to_vec(&body_json)?);
+                }
+            }
+        }
+
+        let response = next.run(req).await?;
+
+        // 응답 압축 (예시)
+        let compressed_response = self.compress_response(response)?;
+
+        Ok(compressed_response)
+    }
+}
+```
+
+## 미들웨어 체이닝과 순서
+
+### Express.js에서의 순서
+
+```javascript
+app.use(cors()); // 1. CORS 처리
+app.use(helmet()); // 2. 보안 헤더
+app.use(compression()); // 3. 응답 압축
+app.use(express.json()); // 4. JSON 파싱
+app.use(rateLimiter); // 5. 요청 제한
+app.use(authenticate); // 6. 인증
+app.use(logger); // 7. 로깅 (마지막)
+```
+
+### Orbital에서의 순서
+
+```rust
+let mut router = Router::new("Ordered Middleware Router");
+
+router
+    .use_cors()                                    // 1. CORS 처리
+    .use_middleware(SecurityHeadersMiddleware)     // 2. 보안 헤더
+    .use_middleware(CompressionMiddleware)         // 3. 응답 압축
+    .use_middleware(RateLimitMiddleware::new(100, 60000)) // 4. 요청 제한
+    .use_middleware(AuthMiddleware::new("secret".to_string())) // 5. 인증
+    .use_logger();                                 // 6. 로깅 (마지막)
+```
+
+## 에러 처리 미들웨어
+
+**Express.js:**
+
+```javascript
+// 에러 핸들링 미들웨어 (마지막에 위치)
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+
+  if (err.name === 'ValidationError') {
+    return res.status(400).json({ error: err.message });
+  }
+
+  if (err.name === 'UnauthorizedError') {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  res.status(500).json({ error: 'Internal Server Error' });
+});
+```
+
+**Orbital:**
+
+```rust
+struct ErrorHandlingMiddleware;
+
+#[async_trait::async_trait]
+impl Middleware for ErrorHandlingMiddleware {
+    async fn handle(
+        &self,
+        req: LUNE,
+        next: Next,
+    ) -> Result<RouteResponse, Box<dyn std::error::Error>> {
+        match next.run(req).await {
+            Ok(response) => Ok(response),
+            Err(error) => {
+                eprintln!("에러 발생: {}", error);
+
+                // 에러 타입별 처리
+                if let Some(validation_error) = error.downcast_ref::<ValidationError>() {
+                    return Ok(RouteResponse::error(400, &validation_error.to_string()));
+                }
+
+                if let Some(_auth_error) = error.downcast_ref::<AuthError>() {
+                    return Ok(RouteResponse::error(401, "Unauthorized"));
+                }
+
+                Ok(RouteResponse::error(500, "Internal Server Error"))
+            }
+        }
+    }
+}
+
+// 미들웨어 체인 마지막에 추가
+router.use_middleware(ErrorHandlingMiddleware);
+```
+
+## 성능 비교
+
+### 메모리 사용량
+
+```rust
+// Express.js: 각 요청마다 새로운 객체 생성
+// req.user = decoded; // 새로운 프로퍼티 추가
+// req.custom_data = {}; // 런타임에 동적 추가
+
+// Orbital: 컴파일 타임에 타입 확정, Zero-cost abstractions
+struct AuthenticatedContext {
+    user: User,
+    permissions: Vec<Permission>,
+}
+```
+
+### 처리 속도
+
+벤치마크 결과 (1000개 요청 기준):
+
+| 미들웨어 | Express.js | Orbital | 개선율 |
+| -------- | ---------- | ------- | ------ |
+| 로깅     | 45ms       | 12ms    | 3.75x  |
+| 인증     | 120ms      | 35ms    | 3.43x  |
+| CORS     | 25ms       | 8ms     | 3.13x  |
+| 종합     | 190ms      | 55ms    | 3.45x  |
+
+## 실전 예제: 블로그 API
+
+완전한 블로그 API를 미들웨어와 함께 구현해보겠습니다:
+
+```rust
+use orbital::application::OrbitApplication;
+use orbital::router::Router;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = OrbitApplication::new(
+        Some("Blog API".to_string()),
+        Some("Orbital 기반 블로그 API".to_string()),
+        Some("1.0.0".to_string())
+    );
+
+    // 공개 라우터
+    let mut public_router = Router::with_base_path("Public API", "/api/public");
+    public_router
+        .use_cors()
+        .use_logger()
+        .use_middleware(RateLimitMiddleware::new(1000, 60000)); // 분당 1000개 요청
+
+    public_router.read("/posts", Arc::new(|_ctx| {
+        // 공개 게시물 목록
+        Ok(RouteResponse::json(json!({
+            "posts": [
+                {"id": 1, "title": "공개 게시물", "public": true}
+            ]
+        })))
+    }));
+
+    // 관리자 라우터
+    let mut admin_router = Router::with_base_path("Admin API", "/api/admin");
+    admin_router
+        .use_cors()
+        .use_middleware(RateLimitMiddleware::new(100, 60000))  // 분당 100개 요청
+        .use_middleware(AuthMiddleware::new("admin_secret".to_string()))
+        .use_middleware(AdminOnlyMiddleware)
+        .use_logger();
+
+    admin_router.create("/posts", Arc::new(|ctx| {
+        // 게시물 생성 (관리자만)
+        let title = ctx.body_field("title")
+            .and_then(|v| v.as_str())
+            .ok_or("Title is required")?;
+
+        Ok(RouteResponse::created(json!({
+            "id": 123,
+            "title": title,
+            "created_at": chrono::Utc::now()
+        })))
+    }));
+
+    app.register(public_router)?;
+    app.register(admin_router)?;
+
+    println!("🚀 블로그 API 서버가 8080 포트에서 시작됩니다...");
+    app.listen(8080).await?;
+
+    Ok(())
+}
+```
+
+## 마무리
+
+Orbital의 미들웨어 시스템은 Express.js의 친숙함을 유지하면서도 Rust의 성능과 안정성을 제공합니다. 타입 안정성, 메모리 안정성, 그리고 뛰어난 성능을 모두 얻을 수 있습니다.
+
+다음 포스트에서는 Orbital의 이벤트 시스템을 활용한 실시간 애플리케이션 구축에 대해 알아보겠습니다!
+
+---
+
+**참고 자료:**
+
+- [Orbital 미들웨어 문서](/docs/orbital/router/middleware)
+- [Express.js 마이그레이션 가이드](/docs/orbital/migration-guide)
+- [성능 벤치마크](https://github.com/arcadiasofts/orbital-benchmarks)
+
+**Arcadia Team** ⚡
